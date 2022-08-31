@@ -46,6 +46,7 @@
 #include "dds/ddsc/dds_public_status.h"
 #include "dds/ddsc/dds_public_listener.h"
 #include "dds/ddsc/dds_public_dynamic_type.h"
+#include "dds/ddsc/dds_loan.h"
 
 #if defined (__cplusplus)
 extern "C" {
@@ -330,24 +331,6 @@ typedef struct dds_sample_info
 dds_sample_info_t;
 
 /** @}*/ // end group subdata
-
-/**
- * @brief Structure of a GUID in any builtin topic sample.
- * @ingroup builtintopic
- */
-typedef struct dds_builtintopic_guid
-{
-  uint8_t v[16]; /**< 16-byte unique identifier */
-}
-dds_builtintopic_guid_t;
-
-/**
- * @brief Structure of a GUID in any builtin topic sample.
- * @ingroup builtintopic
- * @ref dds_builtintopic_guid_t is a bit of a weird name for what everyone just calls a GUID,
- * so let us try and switch to using the more logical one.
- */
-typedef struct dds_builtintopic_guid dds_guid_t;
 
 /**
  * @brief Sample structure of the Builtin topic DcpsParticipant.
@@ -4061,6 +4044,54 @@ dds_read_next_wl(
   void **buf,
   dds_sample_info_t *si);
 
+/**
+ * @brief insert data from a loaned sample into the reader history cache
+ * @ingroup reading
+ *
+ * @param[in] reader The reader entity.
+ * @param[in] data Pointer to the loaned sample of the entity received
+ *
+ * @returns A dds_return_t indicating success or failure.
+ *
+ * @retval DDS_RETCODE_OK
+ *             The operation was successful.
+ * @retval DDS_RETCODE_BAD_PARAMETER
+ *             One or more parameters are invalid.
+ * @retval DDS_RETCODE_ILLEGAL_OPERATION
+ *             The operation is invoked on an inappropriate object.
+ * @retval DDS_RETCODE_ALREADY_DELETED
+ *             The reader entity has already been deleted.
+ */
+DDS_EXPORT dds_return_t
+dds_reader_store_loaned_sample (
+  dds_entity_t reader,
+  dds_loaned_sample_t *data);
+
+/**
+ * @brief request loans from an entity.
+ * @ingroup loan
+ *
+ * @param[in] entity The entity to request loans from.
+ * @param[out] buf Pointer to the array to store the pointers to the loaned samples into.
+ * @param[out] bufsz The number of loans to request.
+ *
+ * @returns A dds_return_t indicating success or failure, either the number of loans received,
+ *          or a failure code.
+ *
+ * @retval >= 0
+ *             The operation was successful, returns the number of loans.
+ * @retval DDS_RETCODE_BAD_PARAMETER
+ *             One or more parameters are invalid.
+ * @retval DDS_RETCODE_ILLEGAL_OPERATION
+ *             The operation is invoked on an inappropriate object.
+ * @retval DDS_RETCODE_ALREADY_DELETED
+ *             The reader entity has already been deleted.
+ */
+DDS_EXPORT dds_return_t
+dds_request_loan(
+  dds_entity_t entity,
+  void **buf,
+  int32_t bufsz);
 
 /**
  * @defgroup loan (Loans API)

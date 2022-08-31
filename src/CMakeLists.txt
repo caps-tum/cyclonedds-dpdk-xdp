@@ -41,31 +41,6 @@ if(ENABLE_SOURCE_SPECIFIC_MULTICAST)
   set(ENABLE_SSM ON)
 endif()
 
-# Prefer iceoryx integration but do not require it.
-set(ENABLE_SHM "AUTO" CACHE STRING "Enable shared memory support")
-
-set_property(CACHE ENABLE_SHM PROPERTY STRINGS ON OFF AUTO)
-if(ENABLE_SHM)
-  if(NOT ENABLE_SHM STREQUAL "AUTO")
-    set(iceoryx_required REQUIRED)
-  else()
-    set(iceoryx_required QUIET)
-  endif()
-  find_package(iceoryx_binding_c ${iceoryx_required})
-  set(ENABLE_SHM ${iceoryx_binding_c_FOUND} CACHE STRING "" FORCE)
-endif()
-# now ENABLE_SHM is no longer AUTO
-if(ENABLE_SHM)
-  if(APPLE)
-    get_filename_component(iceoryx_libdir "${ICEORYX_LIB}" DIRECTORY)
-    set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${iceoryx_libdir}")
-  elseif(WIN32)
-    if (BUILD_SHARED_LIBS OR NOT DEFINED BUILD_SHARED_LIBS)
-      message(FATAL_ERROR "CycloneDDS with enabled shared memory support can only be built as a static library on Windows")
-    endif()
-  endif()
-endif()
-
 # OpenSSL is huge, raising the RSS by 1MB or so, and moreover find_package(OpenSSL) causes
 # trouble on some older CMake versions that otherwise work fine, so provide an option to avoid
 # all OpenSSL related things.

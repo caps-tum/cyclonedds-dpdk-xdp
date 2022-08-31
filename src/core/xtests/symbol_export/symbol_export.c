@@ -59,17 +59,12 @@
 #include "dds/security/core/dds_security_shared_secret.h"
 #endif
 
-#include "dds/ddsc/dds_data_allocator.h"
 #include "dds/ddsc/dds_internal_api.h"
 #include "dds/ddsc/dds_loan_api.h"
 #include "dds/ddsc/dds_rhc.h"
 #include "dds/ddsc/dds_statistics.h"
 
 #include "dds/cdr/dds_cdrstream.h"
-
-#ifdef DDS_HAS_SHM
-#include "dds/ddsi/ddsi_shm_transport.h"
-#endif
 
 DDSRT_WARNING_DEPRECATED_OFF
 
@@ -234,21 +229,8 @@ int main (int argc, char **argv)
   dds_free_typeinfo (ptr);
   dds_get_entity_sertype (1, ptr);
 
-  // dds_data_allocator.h
-  dds_data_allocator_init (1, ptr);
-  dds_data_allocator_init_heap (ptr);
-  dds_data_allocator_fini (ptr);
-  void* d = dds_data_allocator_alloc (ptr, 0);
-  dds_data_allocator_free (ptr, d);
-
   // dds_internal_api.h
   dds_reader_lock_samples (1);
-
-  // dds_loan_api.h
-  dds_is_loan_available (1);
-  dds_is_shared_memory_available (1);
-  dds_loan_shared_memory_buffer (1, 0, ptr);
-  dds_loan_sample (1, ptr);
 
   // dds_public_alloc.h
   dds_alloc (0);
@@ -432,8 +414,8 @@ int main (int argc, char **argv)
   dds_rhc_relinquish_ownership (ptr, 1);
   dds_rhc_set_qos (ptr, ptr);
   dds_rhc_free (ptr);
-  dds_rhc_read (ptr, 0, ptr, ptr, 0, 0, 1, ptr);
-  dds_rhc_take (ptr, 0, ptr, ptr, 0, 0, 1, ptr);
+  dds_rhc_read (ptr, 0, ptr, ptr, 0, 0, 1, ptr, ptr, ptr);
+  dds_rhc_take (ptr, 0, ptr, ptr, 0, 0, 1, ptr, ptr, ptr);
   dds_rhc_readcdr (ptr, 0, ptr, ptr, 0, 0, 0, 0, 1);
   dds_rhc_takecdr (ptr, 0, ptr, ptr, 0, 0, 0, 0, 1);
   dds_rhc_add_readcondition (ptr, ptr);
@@ -633,11 +615,6 @@ int main (int argc, char **argv)
   ddsi_serdata_print (ptr, buf, 0);
   ddsi_serdata_print_untyped (ptr, ptr, buf, 0);
   ddsi_serdata_get_keyhash (ptr, ptr, 0);
-#ifdef DDS_HAS_SHM
-  ddsi_serdata_iox_size (ptr);
-  ddsi_serdata_from_iox (ptr, 0, ptr, ptr);
-  ddsi_serdata_from_loaned_sample (ptr, 0, ptr);
-#endif
 
 #ifdef DDS_HAS_TYPE_DISCOVERY
   // ddsi_typewrap.h
@@ -1020,15 +997,6 @@ int main (int argc, char **argv)
   test_ddsrt_vasprintf (ptr, " ");
   ddsrt_asprintf (ptr, " ");
 
-#if DDS_HAS_SHM
-  // ddsi/ddsi_shm_transport.h
-  // - ROS 2 rmw_cyclonedds_cpp uses these
-  // - Iceoryx integration in ROS 2 will need rework anyway, so
-  //   best to keep these until we change that
-  free_iox_chunk (ptr, ptr2);
-  iceoryx_header_from_chunk (ptr);
-  shm_set_data_state (ptr, (iox_shm_data_state_t)0);
-#endif
   return 0;
 }
 

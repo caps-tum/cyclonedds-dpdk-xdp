@@ -46,7 +46,7 @@ set(srcs_ddsi
   ddsi_plist.c
   ddsi_config.c
   ddsi_time.c
-  ddsi_ownip.c
+  ddsi_nwinterfaces.c
   ddsi_acknack.c
   ddsi_list_genptr.c
   ddsi_wraddrset.c
@@ -109,7 +109,7 @@ set(hdrs_ddsi
   ddsi_domaingv.h
   ddsi_plist.h
   ddsi_xqos.h
-  ddsi_ownip.h
+  ddsi_nwinterfaces.h
   ddsi_config.h
   ddsi_typelib.h
   ddsi_entity.h
@@ -140,6 +140,7 @@ set(hdrs_ddsi
   ddsi_whc.h
   ddsi_xevent.h
   ddsi_xmsg.h
+  ddsi_psmx.h
 )
 
 set(hdrs_private_ddsi
@@ -159,7 +160,7 @@ set(hdrs_private_ddsi
   ddsi__list_genptr.h
   ddsi__mcgroup.h
   ddsi__nwpart.h
-  ddsi__ownip.h
+  ddsi__nwinterfaces.h
   ddsi__participant.h
   ddsi__plist_context_kind.h
   ddsi__plist_generic.h
@@ -272,14 +273,6 @@ if(ENABLE_SECURITY)
   list(APPEND hdrs_private_ddsi
     ddsi__security_msg.h
     ddsi__security_exchange.h
-  )
-endif()
-if(ENABLE_SHM)
-  list(APPEND srcs_ddsi
-    ddsi_shm_transport.c
-  )
-  list(APPEND hdrs_ddsi
-    ddsi_shm_transport.h
   )
 endif()
 
