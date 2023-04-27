@@ -806,27 +806,6 @@ CU_Test(ddsc_psmx, partition_xtalk)
 }
 
 
-
-static void config__check_env (const char *env_variable, const char *expected_value)
-{
-  const char *env_uri = NULL;
-  ddsrt_getenv (env_variable, &env_uri);
-  bool env_ok;
-
-  if (env_uri == NULL)
-    env_ok = false;
-  else if (strncmp (env_uri, expected_value, strlen (expected_value)) != 0)
-    env_ok = false;
-  else
-    env_ok = true;
-
-  if (!env_ok)
-  {
-    dds_return_t r = ddsrt_setenv (env_variable, expected_value);
-    CU_ASSERT_EQUAL_FATAL (r, DDS_RETCODE_OK);
-  }
-}
-
 #define MAX_SAMPLES 8
 CU_Test (ddsc_psmx, basic)
 {
@@ -835,9 +814,7 @@ CU_Test (ddsc_psmx, basic)
   dds_sample_info_t infos[MAX_SAMPLES];
   dds_entity_t participant, topic, writer, reader;
 
-  config__check_env ("CYCLONEDDS_URI", CONFIG_ENV_PSMX);
-
-  participant = dds_create_participant (DDS_DOMAIN_DEFAULT, NULL, NULL);
+  participant = create_participant (0);
   CU_ASSERT_FATAL (participant > 0);
 
   topic = dds_create_topic (participant, &SC_Model_desc, "SC_Model", NULL, NULL);
