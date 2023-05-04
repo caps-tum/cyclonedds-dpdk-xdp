@@ -16,6 +16,7 @@
 #include <rte_ethdev.h>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 
 #include "dds/ddsrt/string.h"
 #include "dds/ddsrt/heap.h"
@@ -30,6 +31,15 @@
 #define DEFAULT_INSTANCE_NAME "CycloneDDS-DPDK-PSMX\0"
 #define DEFAULT_TOPIC_NAME "CycloneDDS-DPDK-PSMX node_id discovery\0"
 
+#ifndef RTE_ETHER_ADDR_BYTES
+// Imported from DPDK 23 cause the older version does not seem to support it.
+#define RTE_ETHER_ADDR_BYTES(mac_addrs) ((mac_addrs)->addr_bytes[0]), \
+					 ((mac_addrs)->addr_bytes[1]), \
+					 ((mac_addrs)->addr_bytes[2]), \
+					 ((mac_addrs)->addr_bytes[3]), \
+					 ((mac_addrs)->addr_bytes[4]), \
+					 ((mac_addrs)->addr_bytes[5])
+#endif
 
 /*forward declarations of functions*/
 namespace dpdk_psmx {
@@ -210,8 +220,9 @@ namespace dpdk_psmx {
             return retval;
         }
 
-        if (dev_info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE)
-            port_conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+        // Unsupported on old DPDK
+//        if (dev_info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE)
+//            port_conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
 
         /* Configure the Ethernet device. */
         retval = rte_eth_dev_configure(port, rx_rings, tx_rings, &port_conf);
