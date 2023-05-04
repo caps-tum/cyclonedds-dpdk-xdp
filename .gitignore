@@ -6,4 +6,6 @@ gen.*
 .vs/
 .vscode/
 build/
+cmake-build-*
+.idea
 *~
