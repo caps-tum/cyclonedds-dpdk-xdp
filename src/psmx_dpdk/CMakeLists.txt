@@ -14,14 +14,15 @@ project(CycloneDDS-PSMX-DPDK VERSION 0.11.0 LANGUAGES C CXX)
 
 find_package(PkgConfig REQUIRED)
 
-pkg_check_modules(libdpdk REQUIRED IMPORTED_TARGET libdpdk)
+pkg_check_modules(LIBDPDK REQUIRED IMPORTED_TARGET libdpdk)
 
 add_library(psmx_dpdk SHARED "src/psmx_dpdk_impl.cpp")
 
 set_target_properties(psmx_dpdk PROPERTIES VERSION ${PROJECT_VERSION})
 
 target_include_directories(psmx_dpdk PRIVATE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
-target_link_libraries(psmx_dpdk PRIVATE ddsc libdpdk)
+target_link_libraries(psmx_dpdk PRIVATE ddsc PkgConfig::LIBDPDK)
+target_compile_options(psmx_dpdk PRIVATE ${LIBDPDK_CFLAGS})
 
 install(TARGETS psmx_dpdk
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
