@@ -16,6 +16,7 @@ set(srcs_ddsi
   ddsi_tcp.c
   ddsi_tran.c
   ddsi_udp.c
+  ddsi_dpdk_l2.c
   ddsi_raweth.c
   ddsi_vnet.c
   ddsi_ipaddr.c
@@ -185,6 +186,7 @@ set(hdrs_private_ddsi
   ddsi__tran.h
   ddsi__typelib.h
   ddsi__udp.h
+  ddsi__dpdk_l2.h
   ddsi__vendor.h
   ddsi__vnet.h
   ddsi__wraddrset.h
