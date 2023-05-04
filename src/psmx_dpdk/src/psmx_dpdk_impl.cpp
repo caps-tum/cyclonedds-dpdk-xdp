@@ -17,6 +17,7 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
+#include <iostream>
 
 #include "dds/ddsrt/string.h"
 #include "dds/ddsrt/heap.h"
@@ -34,11 +35,11 @@
 #ifndef RTE_ETHER_ADDR_BYTES
 // Imported from DPDK 23 cause the older version does not seem to support it.
 #define RTE_ETHER_ADDR_BYTES(mac_addrs) ((mac_addrs)->addr_bytes[0]), \
-					 ((mac_addrs)->addr_bytes[1]), \
-					 ((mac_addrs)->addr_bytes[2]), \
-					 ((mac_addrs)->addr_bytes[3]), \
-					 ((mac_addrs)->addr_bytes[4]), \
-					 ((mac_addrs)->addr_bytes[5])
+                     ((mac_addrs)->addr_bytes[1]), \
+                     ((mac_addrs)->addr_bytes[2]), \
+                     ((mac_addrs)->addr_bytes[3]), \
+                     ((mac_addrs)->addr_bytes[4]), \
+                     ((mac_addrs)->addr_bytes[5])
 #endif
 
 /*forward declarations of functions*/
@@ -180,6 +181,9 @@ namespace dpdk_psmx {
         dpdk_port_id = rte_eth_find_next_owned_by(0, 0);
         dpdk_mempool = rte_pktmbuf_pool_create("MBUF_POOL", NUM_MBUFS * num_ports_used,
                                                MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
+        if (dpdk_mempool == nullptr) {
+            throw std::runtime_error(std::string("Failed to allocated DPDK mempool: ") + rte_strerror(rte_errno));
+        }
         if (dpdk_port_init(dpdk_port_id, dpdk_mempool) != 0) {
             rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", dpdk_port_id);
         }
@@ -220,7 +224,7 @@ namespace dpdk_psmx {
             return retval;
         }
 
-        // Unsupported on old DPDK
+        // TODO: Unsupported on old DPDK
 //        if (dev_info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE)
 //            port_conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
 
@@ -367,6 +371,8 @@ namespace dpdk_psmx {
             assert(false);
         }
 
+        std::cerr << "DPDK: Endpoint created: " << psmx_topic.topic_name << " ("
+                  << (endpoint_type == DDS_PSMX_ENDPOINT_TYPE_READER ? "reader" : "writer") << ")" << std::endl;
     }
 
     dpdk_psmx_endpoint::~dpdk_psmx_endpoint() {
@@ -396,15 +402,15 @@ namespace dpdk_psmx {
 
     struct dpdk_loaned_sample : public dds_loaned_sample_t {
         dpdk_loaned_sample(struct dds_psmx_endpoint *origin, uint32_t sz, const void *ptr,
-                           dds_loaned_sample_state_t st, rte_mbuf* mbuf_handle);
+                           dds_loaned_sample_state_t st, rte_mbuf *mbuf_handle);
 
         ~dpdk_loaned_sample();
-        
-        rte_mbuf* mbuf_handle;
+
+        rte_mbuf *mbuf_handle;
     };
 
     dpdk_loaned_sample::dpdk_loaned_sample(struct dds_psmx_endpoint *origin, uint32_t sz, const void *ptr,
-                                           dds_loaned_sample_state_t st, rte_mbuf* mbuf_handle) :
+                                           dds_loaned_sample_state_t st, rte_mbuf *mbuf_handle) :
             dds_loaned_sample_t{
                     .ops = ls_ops,
                     .loan_origin = origin,
@@ -438,7 +444,7 @@ namespace dpdk_psmx {
 //                    assert(false);
 //            }
 //        }
-        if(mbuf_handle != nullptr) {
+        if (mbuf_handle != nullptr) {
             rte_pktmbuf_free(mbuf_handle);
         }
     }
@@ -447,30 +453,39 @@ namespace dpdk_psmx {
     // dds_psmx_ops_t implementation
 
     static bool dpdk_data_type_supported(dds_psmx_data_type_properties_t data_type) {
-        return !DDS_DATA_TYPE_CONTAINS_INDIRECTIONS (data_type);
+        bool data_type_supported = !DDS_DATA_TYPE_CONTAINS_INDIRECTIONS (data_type);
+        std::cerr << "DPDK: Data type supported: " << data_type_supported << std::endl;
+//        return data_type_supported;
+        std::cerr << "DPDK: Returning true anyway" << std::endl;
+        return true;
     }
 
     static bool dpdk_qos_supported(const struct dds_qos *qos) {
         dds_history_kind h_kind;
+        auto qos_supported = true;
         if (dds_qget_history(qos, &h_kind, NULL) && h_kind != DDS_HISTORY_KEEP_LAST)
-            return false;
+            qos_supported = false;
 
         dds_durability_kind_t d_kind;
         if (dds_qget_durability(qos, &d_kind) &&
             !(d_kind == DDS_DURABILITY_VOLATILE || d_kind == DDS_DURABILITY_TRANSIENT_LOCAL))
-            return false;
+            qos_supported = false;
 
         // FIXME: add more QoS checks (durability_service.kind/depth, ignore_local, partition, liveliness, deadline)
 
-        return true;
+        std::cerr << "DPDK: QoS supported: " << qos_supported << std::endl;
+
+        return qos_supported;
     }
 
     static struct dds_psmx_topic *
     dpdk_create_topic(struct dds_psmx *psmx, const char *topic_name, dds_psmx_data_type_properties_t data_type_props) {
+        std::cerr << "DPDK: Trying to create topic." << std::endl;
         assert(psmx);
-        auto cpp_psmx_ptr = reinterpret_cast<dpdk_psmx *>(psmx);
-        return reinterpret_cast<struct dds_psmx_topic *>(new dpdk_psmx_topic(*cpp_psmx_ptr, topic_name,
-                                                                             data_type_props));
+        auto cpp_psmx_ptr = static_cast<dpdk_psmx *>(psmx);
+        auto topic = new dpdk_psmx_topic(*cpp_psmx_ptr, topic_name, data_type_props);
+        std::cerr << "DPDK: Topic created: " << topic_name << std::endl;
+        return static_cast<struct dds_psmx_topic *>(topic);
     }
 
     static dds_return_t dpdk_delete_topic(struct dds_psmx_topic *psmx_topic) {
@@ -554,26 +569,29 @@ namespace dpdk_psmx {
         const uint16_t number_transmitted = rte_eth_tx_burst(
                 dpdk_psmx_instance->dpdk_port_id,
                 0, // Queue id
-                &static_cast<dpdk_loaned_sample*>(data)->mbuf_handle,
+                &static_cast<dpdk_loaned_sample *>(data)->mbuf_handle,
                 1
         );
 
-        if(number_transmitted != 1) {
+        if (number_transmitted != 1) {
             throw std::runtime_error("Failed to transmit DPDK packet");
         }
+        std::cerr << "DPDK: Wrote sample of size: " << data->metadata->sample_size
+                  << " (" << number_transmitted << " packets transmitted)" << std::endl;
 
 //        auto publisher = reinterpret_cast<iox::popo::UntypedPublisher *>(endpoint_ptr->_iox_endpoint);
 //
 //        publisher->publish(data->metadata);
 
-        
+
         data->metadata = NULL;
         data->sample_ptr = NULL;
 
         return DDS_RETCODE_OK;
     }
 
-    static dds_loaned_sample_t *incoming_sample_to_loan(dpdk_psmx_endpoint *psmx_endpoint, const void *sample, rte_mbuf* mbuf_handle) {
+    static dds_loaned_sample_t *
+    incoming_sample_to_loan(dpdk_psmx_endpoint *psmx_endpoint, const void *sample, rte_mbuf *mbuf_handle) {
         auto md = reinterpret_cast<const dds_psmx_metadata_t *>(sample);
         return new dpdk_loaned_sample(psmx_endpoint, md->sample_size, sample, md->sample_state, mbuf_handle);
     }
@@ -716,5 +734,6 @@ dds_return_t dpdk_create_psmx(struct dds_psmx **psmx, dds_loan_origin_type_t ide
         return DDS_RETCODE_ERROR;
 
     *psmx = reinterpret_cast<struct dds_psmx *>(ptr);
+    std::cerr << "DPDK: PSMX created" << std::endl;
     return DDS_RETCODE_OK;
 }
