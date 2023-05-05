@@ -18,6 +18,7 @@
 #include <limits>
 #include <stdexcept>
 #include <iostream>
+#include <thread>
 
 #include "dds/ddsrt/string.h"
 #include "dds/ddsrt/heap.h"
@@ -52,12 +53,16 @@ namespace dpdk_psmx {
     constexpr auto BURST_SIZE = 32;
     constexpr auto RX_RING_SIZE = 1024;
     constexpr auto TX_RING_SIZE = 1024;
+    constexpr auto DPDK_PSMX_ETHER_TYPE = 0x88B5;
 
     // DPDK Packets
     struct dpdk_packet {
         struct rte_ether_hdr header;
-        uint64_t topicId;
+        struct dds_psmx_metadata data;
 
+        static size_t dataSizeToActualSize(size_t requestedSize) {
+            return requestedSize + offsetof(dpdk_packet, data);
+        }
     };
 
     static bool dpdk_data_type_supported(dds_psmx_data_type_properties_t data_type);
@@ -147,7 +152,7 @@ namespace dpdk_psmx {
     dpdk_psmx::dpdk_psmx(dds_loan_origin_type_t identifier, const char *service_name) :
             dds_psmx_t{
                     .ops = psmx_ops,
-                    .instance_name = DEFAULT_INSTANCE_NAME,
+                    .instance_name = dds_string_dup(DEFAULT_INSTANCE_NAME),
                     .priority = 0,
                     .locator = nullptr,
                     .node_id = identifier,
@@ -168,8 +173,9 @@ namespace dpdk_psmx {
         sprintf(buffer, "CycloneDDS-dpdk_psmx-%016" PRIx64, id);
 
         // TODO: This expects argc and argv
-        char *pseudoArgs = "";
-        int ret = rte_eal_init(0, &pseudoArgs);
+        char *arg0 = "";
+        char *pseudoArgs[] = {arg0, nullptr};
+        int ret = rte_eal_init(0, pseudoArgs);
         if (ret < 0) {
             throw std::runtime_error("Unable to initialize DPDK RTE_EAL");
         }
@@ -187,6 +193,11 @@ namespace dpdk_psmx {
         if (dpdk_port_init(dpdk_port_id, dpdk_mempool) != 0) {
             rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", dpdk_port_id);
         }
+
+//        // Instance name
+//        auto instance_name_copy = new char[sizeof(DEFAULT_INSTANCE_NAME)];
+//        std::memcpy(instance_name_copy, DEFAULT_INSTANCE_NAME, sizeof(*instance_name_copy));
+//        this->instance_name = instance_name_copy;
 
         discover_node_id(id);
         dds_psmx_init_generic(this);
@@ -211,7 +222,6 @@ namespace dpdk_psmx {
         int retval;
         uint16_t q;
         struct rte_eth_dev_info dev_info;
-        struct rte_eth_txconf txconf;
 
         if (!rte_eth_dev_is_valid_port(port))
             return -1;
@@ -239,15 +249,18 @@ namespace dpdk_psmx {
             return retval;
         }
 
+        struct rte_eth_rxconf rxconf = dev_info.default_rxconf;
+        rxconf.offloads = port_conf.rxmode.offloads;
+
         /* Allocate and set up 1 RX queue per Ethernet port. */
         for (q = 0; q < rx_rings; q++) {
-            retval = rte_eth_rx_queue_setup(port, q, nb_rxd, rte_eth_dev_socket_id(port), NULL, mbuf_pool);
+            retval = rte_eth_rx_queue_setup(port, q, nb_rxd, rte_eth_dev_socket_id(port), &rxconf, mbuf_pool);
             if (retval < 0) {
                 return retval;
             }
         }
 
-        txconf = dev_info.default_txconf;
+        struct rte_eth_txconf txconf = dev_info.default_txconf;
         txconf.offloads = port_conf.txmode.offloads;
         /* Allocate and set up 1 TX queue per Ethernet port. */
         for (q = 0; q < tx_rings; q++) {
@@ -269,8 +282,22 @@ namespace dpdk_psmx {
         if (retval != 0)
             return retval;
 
+        retval = rte_eth_dev_set_ptypes(port, RTE_PTYPE_UNKNOWN, NULL, 0);
+        if (retval < 0) {
+            return retval;
+        }
         return 0;
     }
+
+
+    void poll_rx_queue(struct dds_psmx_endpoint *psmxEndpoint) {
+        while (true) {
+            std::cerr << "DPDK: Polling RX Queue" << std::endl;
+            auto loan = dpdk_take(psmxEndpoint);
+            dpdk_loaned_sample_free(loan);
+        }
+    }
+
 
     void dpdk_psmx::discover_node_id(dds_psmx_node_identifier_t fallback) {
 
@@ -356,6 +383,7 @@ namespace dpdk_psmx {
         switch (endpoint_type) {
             case DDS_PSMX_ENDPOINT_TYPE_READER:
 //          _iox_endpoint = new iox::popo::UntypedSubscriber({_parent._parent._service_name, psmx_topic._dpdk_topic_name, _parent._data_type_str});
+                new std::thread([this] { poll_rx_queue(this); });
                 break;
             case DDS_PSMX_ENDPOINT_TYPE_WRITER:
 //          _iox_endpoint = new iox::popo::UntypedPublisher({_parent._parent._service_name, psmx_topic._dpdk_topic_name, _parent._data_type_str});
@@ -372,7 +400,8 @@ namespace dpdk_psmx {
         }
 
         std::cerr << "DPDK: Endpoint created: " << psmx_topic.topic_name << " ("
-                  << (endpoint_type == DDS_PSMX_ENDPOINT_TYPE_READER ? "reader" : "writer") << ")" << std::endl;
+                  << (endpoint_type == DDS_PSMX_ENDPOINT_TYPE_READER ? "reader" : "writer")
+                  << " at " << cdds_endpoint << ")" << std::endl;
     }
 
     dpdk_psmx_endpoint::~dpdk_psmx_endpoint() {
@@ -401,7 +430,7 @@ namespace dpdk_psmx {
             sizeof(dds_psmx_metadata_t) % 8 ? (sizeof(dds_psmx_metadata_t) / 8 + 1) * 8 : sizeof(dds_psmx_metadata_t);
 
     struct dpdk_loaned_sample : public dds_loaned_sample_t {
-        dpdk_loaned_sample(struct dds_psmx_endpoint *origin, uint32_t sz, const void *ptr,
+        dpdk_loaned_sample(struct dds_psmx_endpoint *origin, uint32_t sz, dpdk_packet *ptr,
                            dds_loaned_sample_state_t st, rte_mbuf *mbuf_handle);
 
         ~dpdk_loaned_sample();
@@ -409,24 +438,24 @@ namespace dpdk_psmx {
         rte_mbuf *mbuf_handle;
     };
 
-    dpdk_loaned_sample::dpdk_loaned_sample(struct dds_psmx_endpoint *origin, uint32_t sz, const void *ptr,
+    dpdk_loaned_sample::dpdk_loaned_sample(struct dds_psmx_endpoint *origin, uint32_t sz, dpdk_packet *ptr,
                                            dds_loaned_sample_state_t st, rte_mbuf *mbuf_handle) :
             dds_loaned_sample_t{
                     .ops = ls_ops,
                     .loan_origin = origin,
                     .manager = nullptr,
-                    .metadata = ((struct dds_psmx_metadata *) ptr),
-                    .sample_ptr = ((char *) ptr) + dpdk_padding,  //alignment?
+                    .metadata = &ptr->data,
+                    .sample_ptr = ((char *) &ptr->data) + dpdk_padding,  //alignment?
                     .loan_idx = 0,
                     .refs = {.v = 0}
-            } {
+            },
+            mbuf_handle(mbuf_handle) {
         metadata->sample_state = st;
         metadata->data_type = origin->psmx_topic->data_type;
         metadata->data_origin = origin->psmx_topic->psmx_instance->node_id;
         metadata->sample_size = sz;
         metadata->block_size = sz + dpdk_padding;
 
-        this->mbuf_handle = mbuf_handle;
     }
 
     dpdk_loaned_sample::~dpdk_loaned_sample() {
@@ -539,13 +568,25 @@ namespace dpdk_psmx {
             auto *mbuf = rte_pktmbuf_alloc(
                     static_cast<dpdk_psmx *>(cpp_ep_ptr->psmx_topic->psmx_instance)->dpdk_mempool
             );
-            auto *data_buffer = rte_pktmbuf_append(mbuf, static_cast<uint16_t>(size_requested));
+            auto *data_buffer = static_cast<dpdk_packet *>(
+                    static_cast<void *>(
+                            rte_pktmbuf_append(
+                                    mbuf,
+                                    static_cast<uint16_t>(dpdk_packet::dataSizeToActualSize(size_requested))
+                            )
+                    )
+            );
             if (data_buffer == nullptr) {
                 throw std::runtime_error("Failed to allocate memory in packet.");
             }
             auto *loan = new dpdk_loaned_sample(
                     psmx_endpoint, size_requested, data_buffer, DDS_LOANED_SAMPLE_STATE_UNITIALIZED, mbuf
             );
+            // Set destination MAC to broadcast
+            for (unsigned char &addr_byte: data_buffer->header.d_addr.addr_bytes) {
+                addr_byte = 0xFF;
+            }
+            data_buffer->header.ether_type = DPDK_PSMX_ETHER_TYPE;
             result_ptr = static_cast<dds_loaned_sample_t *>(loan);
 //        auto ptr = reinterpret_cast<iox::popo::UntypedPublisher*>(cpp_ep_ptr->_iox_endpoint);
 //        ptr->loan(size_requested + iox_padding)
@@ -566,10 +607,11 @@ namespace dpdk_psmx {
         auto *dpdk_psmx_instance = static_cast<dpdk_psmx *>(psmx_endpoint->psmx_topic->psmx_instance);
 
 
+        auto *loanedSample = static_cast<dpdk_loaned_sample *>(data);
         const uint16_t number_transmitted = rte_eth_tx_burst(
                 dpdk_psmx_instance->dpdk_port_id,
                 0, // Queue id
-                &static_cast<dpdk_loaned_sample *>(data)->mbuf_handle,
+                &loanedSample->mbuf_handle,
                 1
         );
 
@@ -577,7 +619,13 @@ namespace dpdk_psmx {
             throw std::runtime_error("Failed to transmit DPDK packet");
         }
         std::cerr << "DPDK: Wrote sample of size: " << data->metadata->sample_size
-                  << " (" << number_transmitted << " packets transmitted)" << std::endl;
+                  << " (" << number_transmitted << " packets transmitted, "
+                  << loanedSample->mbuf_handle->pkt_len << " bytes"
+                  << ", guid: " << loanedSample->metadata->guid.v
+                  << ", hash: " << loanedSample->metadata->hash << ")" << std::endl;
+//        printf("Port %u destination: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
+//               " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
+//               dpdk_psmx_instance->dpdk_port_id, RTE_ETHER_ADDR_BYTES(&loanedSample->mbuf_handle->));
 
 //        auto publisher = reinterpret_cast<iox::popo::UntypedPublisher *>(endpoint_ptr->_iox_endpoint);
 //
@@ -591,9 +639,14 @@ namespace dpdk_psmx {
     }
 
     static dds_loaned_sample_t *
-    incoming_sample_to_loan(dpdk_psmx_endpoint *psmx_endpoint, const void *sample, rte_mbuf *mbuf_handle) {
-        auto md = reinterpret_cast<const dds_psmx_metadata_t *>(sample);
-        return new dpdk_loaned_sample(psmx_endpoint, md->sample_size, sample, md->sample_state, mbuf_handle);
+    incoming_sample_to_loan(dpdk_psmx_endpoint *psmx_endpoint, dpdk_packet *packet, rte_mbuf *mbuf_handle) {
+        printf("DPDK: received sample for destination MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
+               " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
+               RTE_ETHER_ADDR_BYTES(&packet->header.d_addr));
+        printf("DPDK: incoming sample at %p is %i bytes and has state %i\n",
+               packet, packet->data.sample_size, packet->data.sample_state);
+        return new dpdk_loaned_sample(psmx_endpoint, packet->data.sample_size, packet,
+                                      packet->data.sample_state, mbuf_handle);
     }
 
     static dds_loaned_sample_t *dpdk_take(struct dds_psmx_endpoint *psmx_endpoint) {
@@ -603,12 +656,17 @@ namespace dpdk_psmx {
 
         // We only want to receive a single packet here.
         auto *mbuf = rte_pktmbuf_alloc(dpdk_psmx_instance->dpdk_mempool);
-        const uint16_t number_received = rte_eth_rx_burst(
-                dpdk_psmx_instance->dpdk_port_id,
-                0,
-                &mbuf,
-                1
-        );
+        std::cerr << "DPDK: Attempting to receive 1 packet." << std::endl;
+        uint16_t number_received = 0;
+        while (number_received == 0) {
+            number_received = rte_eth_rx_burst(
+                    dpdk_psmx_instance->dpdk_port_id,
+                    0,
+                    &mbuf,
+                    1
+            );
+        }
+        std::cerr << "DPDK: Received one packet through manual receive (" << mbuf->pkt_len << " bytes)." << std::endl;
         if (number_received != 1) {
             throw std::runtime_error("Error: Number of received packets was unexpected.");
         }
@@ -619,7 +677,7 @@ namespace dpdk_psmx {
 //                .and_then([&](const void *sample) {
 //                    ptr = incoming_sample_to_loan(endpoint_ptr, sample);
 //                });
-        return incoming_sample_to_loan(endpoint_ptr, rte_pktmbuf_mtod(mbuf, void*), mbuf);
+        return incoming_sample_to_loan(endpoint_ptr, rte_pktmbuf_mtod(mbuf, dpdk_packet*), mbuf);
     }
 
 //    static void on_incoming_data_callback(iox::popo::UntypedSubscriber *subscriber, dpdk_psmx_endpoint *psmx_endpoint) {
@@ -635,10 +693,24 @@ namespace dpdk_psmx {
             uint16_t port_number __rte_unused, uint16_t queue_index __rte_unused,
             struct rte_mbuf **packets, uint16_t number_packets,
             uint16_t max_packets __rte_unused, void *user_data __rte_unused) {
-        auto *psmx_endpoint = static_cast<dpdk_psmx_endpoint *>(user_data);
-        for (int packet_id = 0; packet_id < number_packets; packet_id++) {
-            auto *packet = packets[packet_id];
-            incoming_sample_to_loan(psmx_endpoint, packet->buf_addr, packet);
+        if (number_packets > 0) {
+            std::cerr << "DPDK: Data received through callback (" << number_packets << " packets)" << std::endl;
+            auto *psmx_endpoint = static_cast<dpdk_psmx_endpoint *>(user_data);
+            for (int packet_id = 0; packet_id < number_packets; packet_id++) {
+                auto *packet = packets[packet_id];
+                std::cerr << "Packet address is " << packet << std::endl;
+                auto loan = incoming_sample_to_loan(psmx_endpoint, rte_pktmbuf_mtod(packet, dpdk_packet*), packet);
+                std::cerr << "DPDK: Storing loaned sample of "
+                          << loan->metadata->sample_size << " bytes "
+                          << "(passing sample to DDS endpoint " << psmx_endpoint->cdds_endpoint
+                          << ", guid: " << loan->metadata->guid.v
+                          << ", hash: " << loan->metadata->hash << ")." << std::endl;
+                auto retcode = dds_reader_store_loaned_sample(psmx_endpoint->cdds_endpoint, loan);
+                if (retcode != DDS_RETCODE_OK) {
+                    throw std::runtime_error("Failed to store loaned sample: " + std::to_string(retcode));
+                }
+                std::cerr << "DPDK: Stored loaned sample." << std::endl;
+            }
         }
         return number_packets;
     }
@@ -650,14 +722,18 @@ namespace dpdk_psmx {
 
         endpoint->cdds_endpoint = reader;
 
+        auto portId = static_cast<dpdk_psmx *>(endpoint->psmx_topic->psmx_instance)->dpdk_port_id;
+        std::cerr << "DPDK: Registering RX callback (port " << portId << ", queue 0, endpoint "
+                  << endpoint->cdds_endpoint << ")" << std::endl;
         auto register_return_code = rte_eth_add_rx_callback(
-                reinterpret_cast<dpdk_psmx *>(endpoint->psmx_topic->psmx_instance)->dpdk_port_id,
+                portId,
                 0,
                 on_incoming_data_callback,
                 static_cast<void *>(endpoint)
         );
         if (register_return_code == NULL) {
-            return DDS_RETCODE_ERROR;
+//            return DDS_RETCODE_ERROR;
+            throw std::runtime_error("DPDK: Failed to register RX callback.");
         }
 //        auto iox_subscriber = reinterpret_cast<iox::popo::UntypedSubscriber *>(endpoint->_iox_endpoint);
 //        endpoint->_parent._parent._listener->attachEvent(
