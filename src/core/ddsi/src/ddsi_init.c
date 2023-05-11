@@ -1112,7 +1112,7 @@ int ddsi_init (struct ddsi_domaingv *gv, struct ddsi_psmx_instance_locators *psm
       gv->config.many_sockets_mode = DDSI_MSM_NO_UNICAST;
       if (ddsi_dpdk_l2_init (gv) < 0)
           goto err_udp_tcp_init;
-      gv->m_factory = ddsi_factory_find (gv, "dpdk");
+      gv->m_factory = ddsi_factory_find (gv, "dpdk_l2");
       break;
     case DDSI_TRANS_NONE:
       gv->config.publish_uc_locators = 0;

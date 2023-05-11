@@ -472,40 +472,44 @@ static void ddsi_dpdk_l2_deinit(struct ddsi_tran_factory * fact)
     ddsrt_free (fact);
 }
 
-static int ddsi_dpdk_l2_enumerate_interfaces (struct ddsi_tran_factory * fact, enum ddsi_transport_selector transport_selector, ddsrt_ifaddrs_t **ifs)
+static int ddsi_dpdk_l2_enumerate_interfaces (struct ddsi_tran_factory * fact, enum ddsi_transport_selector transport_selector, ddsrt_ifaddrs_t **interfaces)
 {
 //  int afs[] = { AF_PACKET, DDSRT_AF_TERM };
     (void)fact;
     (void)transport_selector;
-//  return ddsrt_getifaddrs(ifs, afs);
-    ifs = malloc(1 * sizeof(ddsrt_ifaddrs_t));
-    if(!ifs) {
+//  return ddsrt_getifaddrs(interface, afs);
+    ddsrt_ifaddrs_t *interface = malloc(1 * sizeof(ddsrt_ifaddrs_t));
+    if(!interface) {
         assert(false);
     }
 
-    ifs[0]->next = NULL;
-    ifs[0]->name = "DPDK-0";
-    ifs[0]->index = 0;
-    ifs[0]->flags = IFF_BROADCAST | IFF_MULTICAST | IFF_UP | IFF_NOARP | IFF_PROMISC;
-    ifs[0]->type = DDSRT_IFTYPE_WIRED;
+    interface->next = NULL;
+    interface->name = "DPDK-0";
+    interface->index = 0;
+    interface->flags = IFF_BROADCAST | IFF_MULTICAST | IFF_UP | IFF_NOARP | IFF_PROMISC;
+    interface->type = DDSRT_IFTYPE_WIRED;
 
     // TODO: Check whether we need an address family
-    ifs[0]->addr->sa_family = AF_UNSPEC;
-    DDSRT_STATIC_ASSERT(sizeof(ifs[0]->addr->sa_data) == 14);
+    interface->addr = ddsrt_malloc(sizeof(struct sockaddr));
+    interface->addr->sa_family = AF_UNSPEC;
+    DDSRT_STATIC_ASSERT(sizeof(interface->addr->sa_data) == 14);
     // TODO: We assume interface zero
     struct rte_ether_addr addr = get_dpdk_interface_mac_address(0);
-    copy_mac_address_and_zero(ifs[0]->addr->sa_data, 8, &addr);
+    copy_mac_address_and_zero(interface->addr->sa_data, 8, &addr);
 
     // Netmask: FF:FF ... 00:00:00:00:00
-    ifs[0]->broadaddr->sa_family = AF_UNSPEC;
-    memset(ifs[0]->netmask->sa_data, 0xFF, 8);
-    memset(ifs[0]->netmask->sa_data + 8, 0, 6);
+    interface->netmask = ddsrt_malloc(sizeof(struct sockaddr));
+    interface->netmask->sa_family = AF_UNSPEC;
+    memset(interface->netmask->sa_data, 0xFF, 8);
+    memset(interface->netmask->sa_data + 8, 0, 6);
 
     // Broadcast address: 00:00 ... FF:FF:FF:FF:FF:FF
-    ifs[0]->broadaddr->sa_family = AF_UNSPEC;
-    memset(ifs[0]->broadaddr->sa_data, 0, 8);
-    memset(ifs[0]->broadaddr->sa_data + 8, 0xFF, 6);
+    interface->broadaddr = ddsrt_malloc(sizeof(struct sockaddr));
+    interface->broadaddr->sa_family = AF_UNSPEC;
+    memset(interface->broadaddr->sa_data, 0, 8);
+    memset(interface->broadaddr->sa_data + 8, 0xFF, 6);
 
+    *interfaces = interface;
     return DDS_RETCODE_OK;
 }
 
@@ -571,11 +575,12 @@ int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv)
     char *arg0 = "";
     char *pseudoArgs[] = {arg0, NULL};
     int ret = rte_eal_init(0, pseudoArgs);
-    if (ret < 0) {
+    if (ret != 0) {
         DDS_CERROR(&fact->gv->logconfig, "Unable to initialize DPDK RTE_EAL");
         return DDS_RETCODE_NO_NETWORK;
     }
 
+    printf("RTE EAL init success.\n");
     return 0;
 }
 
