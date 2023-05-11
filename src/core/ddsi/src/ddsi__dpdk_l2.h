@@ -17,6 +17,7 @@ extern "C" {
 
 struct ddsi_domaingv;
 
+#define DPDK_FACTORY_TYPE_NAME "dpdk_l2"
 /** @component raw_ethernet_transport */
 int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv);
 

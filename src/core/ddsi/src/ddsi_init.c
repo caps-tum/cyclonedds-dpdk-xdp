@@ -868,6 +868,13 @@ static int setup_and_start_recv_threads (struct ddsi_domaingv *gv)
   gv->n_recv_threads = 1;
   gv->recv_threads[0].name = "recv";
   gv->recv_threads[0].arg.mode = DDSI_RTM_MANY;
+  if(strcmp(gv->m_factory->m_typename, DPDK_FACTORY_TYPE_NAME) == 0) {
+      // TODO: VB This is definitely a hack.
+      printf("RECV-THREADS: Using receive thread mode override.");
+      gv->recv_threads[0].arg.mode = DDSI_RTM_SINGLE;
+      gv->recv_threads[0].arg.u.single.conn = gv->data_conn_mc;
+      gv->recv_threads[0].arg.u.single.loc = &gv->loc_default_mc;
+  }
   if (gv->m_factory->m_connless && gv->config.many_sockets_mode != DDSI_MSM_NO_UNICAST && multi_recv_thr)
   {
     if (ddsi_is_mcaddr (gv, &gv->loc_default_mc) && !ddsi_is_ssm_mcaddr (gv, &gv->loc_default_mc) && (gv->config.allowMulticast & DDSI_AMC_ASM))
@@ -1112,7 +1119,7 @@ int ddsi_init (struct ddsi_domaingv *gv, struct ddsi_psmx_instance_locators *psm
       gv->config.many_sockets_mode = DDSI_MSM_NO_UNICAST;
       if (ddsi_dpdk_l2_init (gv) < 0)
           goto err_udp_tcp_init;
-      gv->m_factory = ddsi_factory_find (gv, "dpdk_l2");
+      gv->m_factory = ddsi_factory_find (gv, DPDK_FACTORY_TYPE_NAME);
       break;
     case DDSI_TRANS_NONE:
       gv->config.publish_uc_locators = 0;

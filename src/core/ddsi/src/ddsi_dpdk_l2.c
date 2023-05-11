@@ -33,6 +33,12 @@
 #include <rte_eal.h>
 #include <rte_ethdev.h>
 
+#define NUM_MBUFS 8191
+#define MBUF_CACHE_SIZE 250
+#define RX_RING_SIZE 1024
+#define TX_RING_SIZE 1024
+
+
 #define DPDK_L2_ETHER_TYPE 0x88B5
 typedef struct dpdk_l2_packet {
     // An over-the-wire packet, consisting of an ethernet header and the payload.
@@ -42,9 +48,21 @@ typedef struct dpdk_l2_packet {
 
 static uint16_t calculate_payload_size(struct rte_mbuf *const buf) {
     // Get the length of the actual payload excluding the space required for the header.
+    if(buf->data_len == 0) {
+        return 0;
+    }
+    assert(buf->data_len > offsetof(struct dpdk_l2_packet, payload));
     DDSRT_STATIC_ASSERT(offsetof(struct dpdk_l2_packet, payload) < UINT16_MAX);
     return buf->data_len - (uint16_t)offsetof(struct dpdk_l2_packet, payload);
 }
+
+typedef struct dpdk_transport_factory {
+    // This needs to be first field so that it can be cast as necessary
+    struct ddsi_tran_factory m_base;
+
+    uint16_t dpdk_port_identifier;
+    struct rte_mempool *m_dpdk_memory_pool;
+} *dpdk_transport_factory_t;
 
 //typedef struct ddsi_raweth_conn {
 //    struct ddsi_tran_conn m_base;
@@ -54,10 +72,8 @@ static uint16_t calculate_payload_size(struct rte_mbuf *const buf) {
 
 typedef struct ddsi_dpdk_l2_conn {
     struct ddsi_tran_conn m_base;
-    // Do we need a socket?
-    uint16_t m_dpdk_port_identifier;
+    // VB: Do we need a socket?
     uint16_t m_dpdk_queue_identifier;
-    struct rte_mempool *m_dpdk_memory_pool;
 } *ddsi_dpdk_l2_conn_t;
 
 static char *ddsi_dpdk_l2_to_string (char *dst, size_t sizeof_dst, const ddsi_locator_t *loc, struct ddsi_tran_conn * conn, int with_port)
@@ -103,19 +119,23 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
 
 //    do {
 //        rc = ddsrt_recvmsg(((ddsi_dpdk_l2_conn_t) conn)->m_sock, &msghdr, 0, &bytes_received);
-        const uint16_t BURST_SIZE = 1;
         /* Get burst of RX packets, from first port of pair. */
-        struct rte_mbuf *bufs[BURST_SIZE];
-        const uint16_t number_received = rte_eth_rx_burst(
-                ((ddsi_dpdk_l2_conn_t) conn)->m_dpdk_port_identifier, 0, bufs, BURST_SIZE);
-        if(number_received != BURST_SIZE) {
+        struct rte_mbuf* mbuf = rte_pktmbuf_alloc(((dpdk_transport_factory_t)conn->m_factory)->m_dpdk_memory_pool);
+        uint16_t number_received = 0;
+        while(
+            (number_received = rte_eth_rx_burst(
+                ((dpdk_transport_factory_t) conn->m_factory)->dpdk_port_identifier, 0, &mbuf, 1)
+            ) == 0) {
+            rte_delay_us_block(100);
+        }
+        if(number_received != 1) {
             DDS_CERROR(&conn->m_base.gv->logconfig,
-                       "Unexpected number of packets received %i (expected %i)",
-                       number_received, BURST_SIZE);
+                       "Unexpected number of packets received %i (expected %i)", number_received, 1);
+            assert(0);
         }
 
-        dpdk_l2_packet_t packet = rte_pktmbuf_mtod(bufs[0], dpdk_l2_packet_t);
-        uint16_t payload_size = calculate_payload_size(bufs[0]);
+        dpdk_l2_packet_t packet = rte_pktmbuf_mtod(mbuf, dpdk_l2_packet_t);
+        uint16_t payload_size = calculate_payload_size(mbuf);
         assert(payload_size <= len);
         memcpy(buf, packet->payload, payload_size);
 
@@ -126,15 +146,14 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
     {
         if (srcloc)
         {
-            struct rte_ether_hdr* ethernet_header = rte_pktmbuf_mtod(&(*bufs)[0], struct rte_ether_hdr*);
             srcloc->kind = DDSI_LOCATOR_KIND_DPDK_L2;
 //            srcloc->port = ntohs (src.sll_protocol);
             DDSRT_STATIC_ASSERT(
-                    sizeof(srcloc->address) == sizeof(ethernet_header->s_addr) + 10
+                    sizeof(srcloc->address) == sizeof(packet->header.s_addr) + 10
             );
-            copy_mac_address_and_zero(srcloc->address, 10, &ethernet_header->s_addr);
-            assert(srcloc->port >= DPDK_L2_ETHER_TYPE);
-            srcloc->port = ethernet_header->ether_type - DPDK_L2_ETHER_TYPE;
+            copy_mac_address_and_zero(srcloc->address, 10, &packet->header.s_addr);
+            assert(packet->header.ether_type >= DPDK_L2_ETHER_TYPE);
+            srcloc->port = packet->header.ether_type - DPDK_L2_ETHER_TYPE;
         }
 
 //        /* Check for udp packet truncation */
@@ -151,6 +170,9 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
 //            DDS_CWARNING(&conn->m_base.gv->logconfig, "%s => %d truncated to %d\n", addrbuf, (int)bytes_received, (int)len);
 //        }
     }
+    printf("DPDK: Read complete (%zi bytes: %02x %02x %02x ... %02x %02x %02x).\n", bytes_received,
+           buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1]
+    );
     return bytes_received;
 }
 
@@ -171,6 +193,7 @@ static bool dpdk_l2_is_broadcast_locator(const ddsi_locator_t *locator) {
 static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_locator_t *dst, size_t niov, const ddsrt_iovec_t *iov, uint32_t flags)
 {
     ddsi_dpdk_l2_conn_t uc = (ddsi_dpdk_l2_conn_t) conn;
+    dpdk_transport_factory_t factory = (dpdk_transport_factory_t) uc->m_base.m_factory;
     dds_return_t rc;
 //    unsigned retry = 2;
 //    int sendflags = 0;
@@ -198,7 +221,7 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
     size_t bytes_transferred = 0;
 
     for(size_t i = 0; i < niov; i++) {
-        struct rte_mbuf *buf = rte_pktmbuf_alloc(uc->m_dpdk_memory_pool);
+        struct rte_mbuf *buf = rte_pktmbuf_alloc(factory->m_dpdk_memory_pool);
         assert(iov[i].iov_len < UINT16_MAX - sizeof(struct dpdk_l2_packet));
         dpdk_l2_packet_t data_loc = (dpdk_l2_packet_t) rte_pktmbuf_append(
             buf, (uint16_t) sizeof(struct dpdk_l2_packet) + (uint16_t) iov[i].iov_len
@@ -212,8 +235,13 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
         memcpy(data_loc->payload, iov[i].iov_base, iov[i].iov_len);
         bytes_transferred += iov[i].iov_len;
 
-        int transmitted = rte_eth_tx_burst(uc->m_dpdk_port_identifier, uc->m_dpdk_queue_identifier, &buf, 1);
+        int transmitted = rte_eth_tx_burst(factory->dpdk_port_identifier, uc->m_dpdk_queue_identifier, &buf, 1);
         assert(transmitted == 1);
+
+        printf("DPDK: Write complete (%zi bytes: %02x %02x %02x ... %02x %02x %02x).\n", iov[i].iov_len,
+               data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[iov[i].iov_len-3], data_loc->payload[iov[i].iov_len-2], data_loc->payload[iov[i].iov_len-1]
+        );
+
         rte_pktmbuf_free(buf);
         rc = DDS_RETCODE_OK;
     }
@@ -234,6 +262,7 @@ static ddsrt_socket_t ddsi_dpdk_l2_conn_handle (struct ddsi_tran_base * base)
     // We don't have a socket and nobody should request it.
     (void) base;
     assert(0);
+//    return DDSRT_INVALID_SOCKET;
 }
 
 static bool ddsi_dpdk_l2_supports (const struct ddsi_tran_factory *fact, int32_t kind)
@@ -257,13 +286,12 @@ static int ddsi_dpdk_l2_conn_locator (struct ddsi_tran_factory * fact, struct dd
     (void) fact;
 
     loc->kind= DDSI_LOCATOR_KIND_DPDK_L2;
-    // TODO: This isn't the real port
-    loc->port = uc->m_dpdk_port_identifier;
+    loc->port = uc->m_base.m_base.m_port;
 
 
     // VB: The MAC address is in the last 6 bytes, the rest is zeroes.
     DDSRT_STATIC_ASSERT(sizeof(loc->address) == sizeof(struct rte_ether_addr) + 10);
-    struct rte_ether_addr addr = get_dpdk_interface_mac_address(uc->m_dpdk_port_identifier);
+    struct rte_ether_addr addr = get_dpdk_interface_mac_address(((dpdk_transport_factory_t)fact)->dpdk_port_identifier);
     copy_mac_address_and_zero(loc->address, 10, &addr);
     return 0;
 }
@@ -275,6 +303,7 @@ static dds_return_t ddsi_dpdk_l2_create_conn (struct ddsi_tran_conn **conn_out, 
     ddsi_dpdk_l2_conn_t  uc = NULL;
 //    struct sockaddr_ll addr;
     bool mcast = (qos->m_purpose == DDSI_TRAN_QOS_RECV_MC);
+    assert(mcast);
     struct ddsi_domaingv const * const gv = fact->gv;
     struct ddsi_network_interface const * const intf = qos->m_interface ? qos->m_interface : &gv->interfaces[0];
 
@@ -286,9 +315,9 @@ static dds_return_t ddsi_dpdk_l2_create_conn (struct ddsi_tran_conn **conn_out, 
 //        return DDS_RETCODE_ERROR;
 //    }
     // TODO: It looks like raweth uses ethernet type as port number
-    if(port != 0) {
-        DDS_CERROR(&fact->gv->logconfig, "ddsi_dpdk2_l2_create_conn: DDSI expected a port number %i, but only 0 supported.", port);
-        assert(0);
+    if(port + DPDK_L2_ETHER_TYPE >= UINT16_MAX) {
+        DDS_CERROR(&fact->gv->logconfig, "ddsi_dpdk2_l2_create_conn: DDSI requested too large port number %i.", port);
+        return DDS_RETCODE_ERROR;
     }
 
 //    rc = ddsrt_socket(&sock, PF_PACKET, SOCK_DGRAM, htons((uint16_t)port));
@@ -320,7 +349,6 @@ static dds_return_t ddsi_dpdk_l2_create_conn (struct ddsi_tran_conn **conn_out, 
     memset (uc, 0, sizeof (*uc));
 //    uc->m_sock = sock;
 //    uc->m_ifindex = addr.sll_ifindex;
-    uc->m_dpdk_port_identifier = 0;
     uc->m_dpdk_queue_identifier = 0;
     ddsi_factory_conn_init (fact, intf, &uc->m_base);
     uc->m_base.m_base.m_port = port;
@@ -334,6 +362,7 @@ static dds_return_t ddsi_dpdk_l2_create_conn (struct ddsi_tran_conn **conn_out, 
 
     DDS_CTRACE (&fact->gv->logconfig, "ddsi_dpdk_l2_create_conn %s socket port %u\n", mcast ? "multicast" : "unicast", uc->m_base.m_base.m_port);
     *conn_out = &uc->m_base;
+    printf("DPDK: Connection opened on port %i\n", port);
     return DDS_RETCODE_OK;
 }
 
@@ -484,7 +513,7 @@ static int ddsi_dpdk_l2_enumerate_interfaces (struct ddsi_tran_factory * fact, e
     }
 
     interface->next = NULL;
-    interface->name = "DPDK-0";
+    interface->name = strdup("DPDK-0");
     interface->index = 0;
     interface->flags = IFF_BROADCAST | IFF_MULTICAST | IFF_UP | IFF_NOARP | IFF_PROMISC;
     interface->type = DDSRT_IFTYPE_WIRED;
@@ -537,37 +566,116 @@ static int ddsi_dpdk_l2_locator_from_sockaddr (const struct ddsi_tran_factory *t
 
     loc->kind = DDSI_LOCATOR_KIND_DPDK_L2;
     loc->port = DDSI_LOCATOR_PORT_INVALID;
-    memset (loc->address, 0, 10);
-    memcpy (loc->address + 10, ((struct sockaddr_ll *) sockaddr)->sll_addr, 6);
+    DDSRT_STATIC_ASSERT(sizeof(loc->address) == sizeof(sockaddr->sa_data) + 2);
+    memset (loc->address, 0, 2);
+    memcpy (loc->address + 2, sockaddr->sa_data, sizeof(sockaddr->sa_data));
     return 0;
 }
 
+
+// Implemented with help from here: https://doc.dpdk.org/guides/sample_app_ug/skeleton.html
+static inline int dpdk_port_init(uint16_t port, struct rte_mempool *mbuf_pool) {
+    struct rte_eth_conf port_conf;
+    const uint16_t rx_rings = 1, tx_rings = 1;
+    uint16_t nb_rxd = RX_RING_SIZE;
+    uint16_t nb_txd = TX_RING_SIZE;
+    int retval;
+    uint16_t q;
+    struct rte_eth_dev_info dev_info;
+
+    if (!rte_eth_dev_is_valid_port(port))
+        return -1;
+
+    memset(&port_conf, 0, sizeof(struct rte_eth_conf));
+
+    retval = rte_eth_dev_info_get(port, &dev_info);
+    if (retval != 0) {
+        printf("DPDK: Error during getting device (port %u) info: %s\n", port, strerror(-retval));
+        return retval;
+    }
+
+    // TODO: Unsupported on old DPDK
+//        if (dev_info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE)
+//            port_conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+
+    /* Configure the Ethernet device. */
+    retval = rte_eth_dev_configure(port, rx_rings, tx_rings, &port_conf);
+    if (retval != 0) {
+        return retval;
+    }
+
+    retval = rte_eth_dev_adjust_nb_rx_tx_desc(port, &nb_rxd, &nb_txd);
+    if (retval != 0) {
+        return retval;
+    }
+
+    struct rte_eth_rxconf rxconf = dev_info.default_rxconf;
+    rxconf.offloads = port_conf.rxmode.offloads;
+
+    /* Allocate and set up 1 RX queue per Ethernet port. */
+    for (q = 0; q < rx_rings; q++) {
+        retval = rte_eth_rx_queue_setup(port, q, nb_rxd, (unsigned int) rte_eth_dev_socket_id(port), &rxconf, mbuf_pool);
+        if (retval < 0) {
+            return retval;
+        }
+    }
+
+    struct rte_eth_txconf txconf = dev_info.default_txconf;
+    txconf.offloads = port_conf.txmode.offloads;
+    /* Allocate and set up 1 TX queue per Ethernet port. */
+    for (q = 0; q < tx_rings; q++) {
+        retval = rte_eth_tx_queue_setup(port, q, nb_txd, (unsigned int) rte_eth_dev_socket_id(port), &txconf);
+        if (retval < 0) {
+            return retval;
+        }
+    }
+
+    /* Starting Ethernet port. 8< */
+    retval = rte_eth_dev_start(port);
+    /* >8 End of starting of ethernet port. */
+    if (retval < 0)
+        return retval;
+
+    /* Enable RX in promiscuous mode for the Ethernet device. */
+    retval = rte_eth_promiscuous_enable(port);
+    /* End of setting RX port in promiscuous mode. */
+    if (retval != 0)
+        return retval;
+
+//    retval = rte_eth_dev_set_ptypes(port, RTE_PTYPE_UNKNOWN, NULL, 0);
+//    if (retval < 0) {
+//        return retval;
+//    }
+    return 0;
+}
+
+
 int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv)
 {
-    struct ddsi_tran_factory *fact = ddsrt_malloc (sizeof (*fact));
+    struct dpdk_transport_factory *fact = ddsrt_malloc (sizeof (*fact));
     memset (fact, 0, sizeof (*fact));
-    fact->gv = gv;
-    fact->m_free_fn = ddsi_dpdk_l2_deinit;
-    fact->m_typename = "dpdk_l2";
-    fact->m_default_spdp_address = "dpdk_l2/ff:ff:ff:ff:ff:ff";
-    fact->m_connless = 1;
-    fact->m_enable_spdp = 1;
-    fact->m_supports_fn = ddsi_dpdk_l2_supports;
-    fact->m_create_conn_fn = ddsi_dpdk_l2_create_conn;
-    fact->m_release_conn_fn = ddsi_dpdk_l2_release_conn;
-    fact->m_join_mc_fn = ddsi_dpdk_l2_join_mc;
-    fact->m_leave_mc_fn = ddsi_dpdk_l2_leave_mc;
-    fact->m_is_loopbackaddr_fn = ddsi_dpdk_l2_is_loopbackaddr;
-    fact->m_is_mcaddr_fn = ddsi_dpdk_l2_is_mcaddr;
-    fact->m_is_ssm_mcaddr_fn = ddsi_dpdk_l2_is_ssm_mcaddr;
-    fact->m_is_nearby_address_fn = ddsi_dpdk_l2_is_nearby_address;
-    fact->m_locator_from_string_fn = ddsi_dpdk_l2_address_from_string;
-    fact->m_locator_to_string_fn = ddsi_dpdk_l2_to_string;
-    fact->m_enumerate_interfaces_fn = ddsi_dpdk_l2_enumerate_interfaces;
-    fact->m_is_valid_port_fn = ddsi_dpdk_l2_is_valid_port;
-    fact->m_receive_buffer_size_fn = ddsi_dpdk_l2_receive_buffer_size;
-    fact->m_locator_from_sockaddr_fn = ddsi_dpdk_l2_locator_from_sockaddr;
-    ddsi_factory_add (gv, fact);
+    fact->m_base.gv = gv;
+    fact->m_base.m_free_fn = ddsi_dpdk_l2_deinit;
+    fact->m_base.m_typename = DPDK_FACTORY_TYPE_NAME;
+    fact->m_base.m_default_spdp_address = "dpdk_l2/ff:ff:ff:ff:ff:ff";
+    fact->m_base.m_connless = 1;
+    fact->m_base.m_enable_spdp = 1;
+    fact->m_base.m_supports_fn = ddsi_dpdk_l2_supports;
+    fact->m_base.m_create_conn_fn = ddsi_dpdk_l2_create_conn;
+    fact->m_base.m_release_conn_fn = ddsi_dpdk_l2_release_conn;
+    fact->m_base.m_join_mc_fn = ddsi_dpdk_l2_join_mc;
+    fact->m_base.m_leave_mc_fn = ddsi_dpdk_l2_leave_mc;
+    fact->m_base.m_is_loopbackaddr_fn = ddsi_dpdk_l2_is_loopbackaddr;
+    fact->m_base.m_is_mcaddr_fn = ddsi_dpdk_l2_is_mcaddr;
+    fact->m_base.m_is_ssm_mcaddr_fn = ddsi_dpdk_l2_is_ssm_mcaddr;
+    fact->m_base.m_is_nearby_address_fn = ddsi_dpdk_l2_is_nearby_address;
+    fact->m_base.m_locator_from_string_fn = ddsi_dpdk_l2_address_from_string;
+    fact->m_base.m_locator_to_string_fn = ddsi_dpdk_l2_to_string;
+    fact->m_base.m_enumerate_interfaces_fn = ddsi_dpdk_l2_enumerate_interfaces;
+    fact->m_base.m_is_valid_port_fn = ddsi_dpdk_l2_is_valid_port;
+    fact->m_base.m_receive_buffer_size_fn = ddsi_dpdk_l2_receive_buffer_size;
+    fact->m_base.m_locator_from_sockaddr_fn = ddsi_dpdk_l2_locator_from_sockaddr;
+    ddsi_factory_add (gv, (struct ddsi_tran_factory *) fact);
     GVLOG (DDS_LC_CONFIG, "dpdk_l2 initialized\n");
 
     // We need to initialize EAL
@@ -576,11 +684,22 @@ int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv)
     char *pseudoArgs[] = {arg0, NULL};
     int ret = rte_eal_init(0, pseudoArgs);
     if (ret != 0) {
-        DDS_CERROR(&fact->gv->logconfig, "Unable to initialize DPDK RTE_EAL");
+        DDS_CERROR(&fact->m_base.gv->logconfig, "Unable to initialize DPDK RTE_EAL");
         return DDS_RETCODE_NO_NETWORK;
     }
-
     printf("RTE EAL init success.\n");
+
+    fact->m_dpdk_memory_pool = rte_pktmbuf_pool_create(
+            "MBUF_POOL", NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, (int) rte_socket_id()
+            );
+    if (fact->m_dpdk_memory_pool == NULL) {
+        DDS_CERROR(&fact->m_base.gv->logconfig, "Failed to allocate DPDK mempool.");
+        return DDS_RETCODE_OUT_OF_RESOURCES;
+    }
+    if (dpdk_port_init(fact->dpdk_port_identifier, fact->m_dpdk_memory_pool) != 0) {
+        rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", fact->dpdk_port_identifier);
+    }
+
     return 0;
 }
 
