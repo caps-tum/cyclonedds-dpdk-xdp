@@ -153,6 +153,7 @@ enum ddsi_transport_selector {
   DDSI_TRANS_TCP,
   DDSI_TRANS_TCP6,
   DDSI_TRANS_RAWETH,
+  DDSI_TRANS_DPDK_L2,
   DDSI_TRANS_NONE /* FIXME: see FIXME above ... :( */
 };
 

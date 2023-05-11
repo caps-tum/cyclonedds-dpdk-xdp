@@ -286,6 +286,13 @@ target_sources(ddsc PRIVATE ${srcs_ddsi} ${generated_defconfig_src} ${hdrs_priva
 add_dependencies(ddsc _confgen)
 target_include_directories(ddsc PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
 
+find_package(PkgConfig REQUIRED)
+
+pkg_check_modules(LIBDPDK REQUIRED IMPORTED_TARGET libdpdk)
+
+target_link_libraries(ddsc PRIVATE PkgConfig::LIBDPDK)
+target_compile_options(ddsc PRIVATE ${LIBDPDK_CFLAGS})
+
 install(
   DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/include/"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"

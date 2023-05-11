@@ -72,6 +72,7 @@
 
 #include "dds__whc.h"
 #include "dds/cdr/dds_cdrstream.h"
+#include "ddsi__dpdk_l2.h"
 
 static void add_peer_addresses (const struct ddsi_domaingv *gv, struct ddsi_addrset *as, const struct ddsi_config_peer_listelem *list)
 {
@@ -1103,6 +1104,15 @@ int ddsi_init (struct ddsi_domaingv *gv, struct ddsi_psmx_instance_locators *psm
       if (ddsi_raweth_init (gv) < 0)
         goto err_udp_tcp_init;
       gv->m_factory = ddsi_factory_find (gv, "raweth");
+      break;
+    case DDSI_TRANS_DPDK_L2:
+      gv->config.publish_uc_locators = 1;
+      gv->config.enable_uc_locators = 0;
+      gv->config.participantIndex = DDSI_PARTICIPANT_INDEX_NONE;
+      gv->config.many_sockets_mode = DDSI_MSM_NO_UNICAST;
+      if (ddsi_dpdk_l2_init (gv) < 0)
+          goto err_udp_tcp_init;
+      gv->m_factory = ddsi_factory_find (gv, "dpdk");
       break;
     case DDSI_TRANS_NONE:
       gv->config.publish_uc_locators = 0;
