@@ -638,10 +638,10 @@ static inline int dpdk_port_init(uint16_t port, struct rte_mempool *mbuf_pool) {
         return retval;
 
     /* Enable RX in promiscuous mode for the Ethernet device. */
-    retval = rte_eth_promiscuous_enable(port);
+//    retval = rte_eth_promiscuous_enable(port);
     /* End of setting RX port in promiscuous mode. */
-    if (retval != 0)
-        return retval;
+//    if (retval != 0)
+//        return retval;
 
 //    retval = rte_eth_dev_set_ptypes(port, RTE_PTYPE_UNKNOWN, NULL, 0);
 //    if (retval < 0) {
