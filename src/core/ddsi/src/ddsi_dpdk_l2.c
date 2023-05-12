@@ -121,7 +121,7 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
 //    do {
 //        rc = ddsrt_recvmsg(((ddsi_dpdk_l2_conn_t) conn)->m_sock, &msghdr, 0, &bytes_received);
     /* Get burst of RX packets, from first port of pair. */
-    struct rte_mempool *mempool = ((dpdk_transport_factory_t) conn->m_factory)->m_dpdk_memory_pool_rx;
+//    struct rte_mempool *mempool = ((dpdk_transport_factory_t) conn->m_factory)->m_dpdk_memory_pool_rx;
     struct rte_mbuf *mbuf[1];
     uint16_t number_received;
     ssize_t bytes_received;
@@ -136,7 +136,7 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
         }
         if (tries >= 200) {
             bytes_received = DDS_RETCODE_TRY_AGAIN;
-            printf("Read: TRYAGAIN (%i bufs available)\n", rte_mempool_avail_count(mempool));
+//            printf("Read: TRYAGAIN (%i bufs available)\n", rte_mempool_avail_count(mempool));
             break;
         }
         rte_delay_us_block(1000);
@@ -165,12 +165,12 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
             srcloc->port = packet->header.ether_type - DPDK_L2_ETHER_TYPE;
         }
 
-        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
-               srcloc->port, bytes_received,
-               buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
-               rte_hash_crc(packet->payload, bytes_received, 1337),
-               rte_mempool_avail_count(mempool)
-        );
+//        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
+//               srcloc->port, bytes_received,
+//               buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
+//               rte_hash_crc(packet->payload, bytes_received, 1337),
+//               rte_mempool_avail_count(mempool)
+//        );
         assert(conn->m_base.m_port == srcloc->port);
 
         // Packet is only allocated if it was successfully received.
@@ -259,12 +259,12 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
         abort();
     }
 
-    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
-           dst->port, niov, bytes_transferred,
-           data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[bytes_transferred-3], data_loc->payload[bytes_transferred-2], data_loc->payload[bytes_transferred-1],
-           rte_hash_crc(data_loc->payload, bytes_transferred, 1337),
-           rte_mempool_avail_count(factory->m_dpdk_memory_pool_tx)
-    );
+//    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
+//           dst->port, niov, bytes_transferred,
+//           data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[bytes_transferred-3], data_loc->payload[bytes_transferred-2], data_loc->payload[bytes_transferred-1],
+//           rte_hash_crc(data_loc->payload, bytes_transferred, 1337),
+//           rte_mempool_avail_count(factory->m_dpdk_memory_pool_tx)
+//    );
 
     rc = DDS_RETCODE_OK;
     return (rc == DDS_RETCODE_OK ? (ssize_t) bytes_transferred : -1);
