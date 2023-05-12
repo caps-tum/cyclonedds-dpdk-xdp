@@ -870,7 +870,7 @@ static int setup_and_start_recv_threads (struct ddsi_domaingv *gv)
   gv->recv_threads[0].arg.mode = DDSI_RTM_MANY;
   if(strcmp(gv->m_factory->m_typename, DPDK_FACTORY_TYPE_NAME) == 0) {
       // TODO: VB This is definitely a hack.
-      printf("RECV-THREADS: Using receive thread mode override.");
+      printf("RECV-THREADS: Using receive thread mode override.\n");
       gv->recv_threads[0].arg.mode = DDSI_RTM_SINGLE;
       gv->recv_threads[0].arg.u.single.conn = gv->data_conn_mc;
       gv->recv_threads[0].arg.u.single.loc = &gv->loc_default_mc;

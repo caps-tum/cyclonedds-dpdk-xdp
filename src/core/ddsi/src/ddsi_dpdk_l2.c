@@ -157,10 +157,10 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
             srcloc->port = packet->header.ether_type - DPDK_L2_ETHER_TYPE;
         }
 
-        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x).\n",
-               srcloc->port, bytes_received,
-               buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1]
-        );
+//        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x).\n",
+//               srcloc->port, bytes_received,
+//               buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1]
+//        );
         assert(conn->m_base.m_port == srcloc->port);
     }
     rte_pktmbuf_free(mbuf);
@@ -240,10 +240,10 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
     int transmitted = rte_eth_tx_burst(factory->dpdk_port_identifier, uc->m_dpdk_queue_identifier, &buf, 1);
     assert(transmitted == 1);
 
-    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x).\n",
-           dst->port, niov, bytes_transferred,
-           data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[bytes_transferred-3], data_loc->payload[bytes_transferred-2], data_loc->payload[bytes_transferred-1]
-    );
+//    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x).\n",
+//           dst->port, niov, bytes_transferred,
+//           data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[bytes_transferred-3], data_loc->payload[bytes_transferred-2], data_loc->payload[bytes_transferred-1]
+//    );
 
     rte_pktmbuf_free(buf);
     rc = DDS_RETCODE_OK;
