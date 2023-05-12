@@ -238,7 +238,9 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
     }
 
     int transmitted = rte_eth_tx_burst(factory->dpdk_port_identifier, uc->m_dpdk_queue_identifier, &buf, 1);
-    assert(transmitted == 1);
+    if(transmitted != 1) {
+        return DDS_RETCODE_TRY_AGAIN;
+    }
 
 //    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x).\n",
 //           dst->port, niov, bytes_transferred,
@@ -393,6 +395,7 @@ static int ddsi_dpdk_l2_join_mc (struct ddsi_tran_conn * conn, const ddsi_locato
         (void)srcloc;
         (void)interf;
         assert(false);
+        return DDS_RETCODE_UNSUPPORTED;
 //        ddsi_raweth_conn_t uc = (ddsi_raweth_conn_t) conn;
 //        (void)srcloc;
 //        return joinleave_asm_mcgroup(uc->m_sock, 1, mcloc, interf);
@@ -410,6 +413,7 @@ static int ddsi_dpdk_l2_leave_mc (struct ddsi_tran_conn * conn, const ddsi_locat
         (void)srcloc;
         (void)interf;
         assert(false);
+        return DDS_RETCODE_UNSUPPORTED;
 //        ddsi_raweth_conn_t uc = (ddsi_raweth_conn_t) conn;
 //        (void)srcloc;
 //        return joinleave_asm_mcgroup(uc->m_sock, 0, mcloc, interf);
