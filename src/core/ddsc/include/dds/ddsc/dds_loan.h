@@ -23,7 +23,6 @@
 #include "dds/ddsc/dds_basic_types.h"
 #include "dds/ddsrt/retcode.h"
 #include "dds/ddsrt/atomics.h"
-#include "dds/ddsrt/time.h"
 
 #if defined(__cplusplus)
 extern "C" {
