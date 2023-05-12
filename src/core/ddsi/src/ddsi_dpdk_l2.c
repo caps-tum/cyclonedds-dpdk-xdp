@@ -121,28 +121,31 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
 //    do {
 //        rc = ddsrt_recvmsg(((ddsi_dpdk_l2_conn_t) conn)->m_sock, &msghdr, 0, &bytes_received);
     /* Get burst of RX packets, from first port of pair. */
-    struct rte_mbuf *mbuf = rte_pktmbuf_alloc(((dpdk_transport_factory_t) conn->m_factory)->m_dpdk_memory_pool_rx);
+    struct rte_mempool *mempool = ((dpdk_transport_factory_t) conn->m_factory)->m_dpdk_memory_pool_rx;
+    struct rte_mbuf *mbuf[1];
     uint16_t number_received;
     ssize_t bytes_received;
     uint8_t tries = 0;
     while (true) {
+        // TODO VB: Num packets should be divisible by eight for any driver to work.
         number_received = rte_eth_rx_burst(
-                ((dpdk_transport_factory_t) conn->m_factory)->dpdk_port_identifier, 0, &mbuf, 1
+                ((dpdk_transport_factory_t) conn->m_factory)->dpdk_port_identifier, 0, mbuf, 1
         );
         if (number_received > 0) {
             break;
         }
-        if (tries >= 5) {
+        if (tries >= 200) {
             bytes_received = DDS_RETCODE_TRY_AGAIN;
+            printf("Read: TRYAGAIN (%i bufs available)\n", rte_mempool_avail_count(mempool));
             break;
         }
-        rte_delay_us_block(100);
+        rte_delay_us_block(1000);
         tries++;
     }
     if (number_received == 1) {
 
-        dpdk_l2_packet_t packet = rte_pktmbuf_mtod(mbuf, dpdk_l2_packet_t);
-        uint16_t payload_size = calculate_payload_size(mbuf);
+        dpdk_l2_packet_t packet = rte_pktmbuf_mtod(mbuf[0], dpdk_l2_packet_t);
+        uint16_t payload_size = calculate_payload_size(mbuf[0]);
         if(payload_size <= len) {
             memcpy(buf, packet->payload, payload_size);
             bytes_received = payload_size;
@@ -162,14 +165,15 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
             srcloc->port = packet->header.ether_type - DPDK_L2_ETHER_TYPE;
         }
 
-        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x).\n",
+        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
                srcloc->port, bytes_received,
                buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
-               rte_hash_crc(packet->payload, bytes_received, 1337)
+               rte_hash_crc(packet->payload, bytes_received, 1337),
+               rte_mempool_avail_count(mempool)
         );
         assert(conn->m_base.m_port == srcloc->port);
     }
-    rte_pktmbuf_free(mbuf);
+    rte_pktmbuf_free(mbuf[0]);
 
 //    } while (rc == DDS_RETCODE_INTERRUPTED);
 
@@ -244,17 +248,22 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
     }
 
     int transmitted = rte_eth_tx_burst(factory->dpdk_port_identifier, uc->m_dpdk_queue_identifier, &buf, 1);
-    if(transmitted != 1) {
+    rte_pktmbuf_free(buf);
+    if(transmitted == 0) {
         return DDS_RETCODE_TRY_AGAIN;
     }
+    else if(transmitted > 1) {
+        printf("DPDK: Transferred more than 1 packet after sending 1 packet. Something is really wrong\n");
+        abort();
+    }
 
-    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x).\n",
+    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
            dst->port, niov, bytes_transferred,
            data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[bytes_transferred-3], data_loc->payload[bytes_transferred-2], data_loc->payload[bytes_transferred-1],
-           rte_hash_crc(data_loc->payload, bytes_transferred, 1337)
+           rte_hash_crc(data_loc->payload, bytes_transferred, 1337),
+           rte_mempool_avail_count(factory->m_dpdk_memory_pool_tx)
     );
 
-    rte_pktmbuf_free(buf);
     rc = DDS_RETCODE_OK;
     return (rc == DDS_RETCODE_OK ? (ssize_t) bytes_transferred : -1);
 }
