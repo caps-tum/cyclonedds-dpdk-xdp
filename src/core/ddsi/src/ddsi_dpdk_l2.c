@@ -141,9 +141,12 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
 
         dpdk_l2_packet_t packet = rte_pktmbuf_mtod(mbuf, dpdk_l2_packet_t);
         uint16_t payload_size = calculate_payload_size(mbuf);
-        assert(payload_size <= len);
-        memcpy(buf, packet->payload, payload_size);
-        bytes_received = payload_size;
+        if(payload_size <= len) {
+            memcpy(buf, packet->payload, payload_size);
+            bytes_received = payload_size;
+        } else {
+            bytes_received = DDS_RETCODE_TRY_AGAIN;
+        }
 
         if (srcloc)
         {
