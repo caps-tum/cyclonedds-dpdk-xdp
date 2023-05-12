@@ -62,7 +62,8 @@ typedef struct dpdk_transport_factory {
     struct ddsi_tran_factory m_base;
 
     uint16_t dpdk_port_identifier;
-    struct rte_mempool *m_dpdk_memory_pool;
+    struct rte_mempool *m_dpdk_memory_pool_tx;
+    struct rte_mempool *m_dpdk_memory_pool_rx;
 } *dpdk_transport_factory_t;
 
 //typedef struct ddsi_raweth_conn {
@@ -120,7 +121,7 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
 //    do {
 //        rc = ddsrt_recvmsg(((ddsi_dpdk_l2_conn_t) conn)->m_sock, &msghdr, 0, &bytes_received);
     /* Get burst of RX packets, from first port of pair. */
-    struct rte_mbuf *mbuf = rte_pktmbuf_alloc(((dpdk_transport_factory_t) conn->m_factory)->m_dpdk_memory_pool);
+    struct rte_mbuf *mbuf = rte_pktmbuf_alloc(((dpdk_transport_factory_t) conn->m_factory)->m_dpdk_memory_pool_rx);
     uint16_t number_received;
     ssize_t bytes_received;
     uint8_t tries = 0;
@@ -225,7 +226,7 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
         total_iov_size += iov[i].iov_len;
     }
 
-    struct rte_mbuf *buf = rte_pktmbuf_alloc(factory->m_dpdk_memory_pool);
+    struct rte_mbuf *buf = rte_pktmbuf_alloc(factory->m_dpdk_memory_pool_tx);
     assert(total_iov_size < UINT16_MAX - sizeof(struct dpdk_l2_packet));
     dpdk_l2_packet_t data_loc = (dpdk_l2_packet_t) rte_pktmbuf_append(
             buf, (uint16_t) sizeof(struct dpdk_l2_packet) + (uint16_t) total_iov_size
@@ -578,7 +579,7 @@ static int ddsi_dpdk_l2_locator_from_sockaddr (const struct ddsi_tran_factory *t
 
 
 // Implemented with help from here: https://doc.dpdk.org/guides/sample_app_ug/skeleton.html
-static inline int dpdk_port_init(uint16_t port, struct rte_mempool *mbuf_pool) {
+static inline int dpdk_port_init(uint16_t port, struct rte_mempool *rx_mbuf_pool) {
     struct rte_eth_conf port_conf;
     const uint16_t rx_rings = 1, tx_rings = 1;
     uint16_t nb_rxd = RX_RING_SIZE;
@@ -618,7 +619,7 @@ static inline int dpdk_port_init(uint16_t port, struct rte_mempool *mbuf_pool) {
 
     /* Allocate and set up 1 RX queue per Ethernet port. */
     for (q = 0; q < rx_rings; q++) {
-        retval = rte_eth_rx_queue_setup(port, q, nb_rxd, (unsigned int) rte_eth_dev_socket_id(port), &rxconf, mbuf_pool);
+        retval = rte_eth_rx_queue_setup(port, q, nb_rxd, (unsigned int) rte_eth_dev_socket_id(port), &rxconf, rx_mbuf_pool);
         if (retval < 0) {
             return retval;
         }
@@ -693,14 +694,24 @@ int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv)
     }
     printf("RTE EAL init success.\n");
 
-    fact->m_dpdk_memory_pool = rte_pktmbuf_pool_create(
-            "MBUF_POOL", NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, (int) rte_socket_id()
+    // TX buffers
+    fact->m_dpdk_memory_pool_tx = rte_pktmbuf_pool_create(
+            "MBUF_POOL_TX", NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, (int) rte_socket_id()
             );
-    if (fact->m_dpdk_memory_pool == NULL) {
+    if (fact->m_dpdk_memory_pool_tx == NULL) {
         DDS_CERROR(&fact->m_base.gv->logconfig, "Failed to allocate DPDK mempool.");
         return DDS_RETCODE_OUT_OF_RESOURCES;
     }
-    if (dpdk_port_init(fact->dpdk_port_identifier, fact->m_dpdk_memory_pool) != 0) {
+    // RX buffers
+    fact->m_dpdk_memory_pool_rx = rte_pktmbuf_pool_create(
+            "MBUF_POOL_RX", NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, (int) rte_socket_id()
+    );
+    if (fact->m_dpdk_memory_pool_rx == NULL) {
+        DDS_CERROR(&fact->m_base.gv->logconfig, "Failed to allocate DPDK mempool.");
+        return DDS_RETCODE_OUT_OF_RESOURCES;
+    }
+
+    if (dpdk_port_init(fact->dpdk_port_identifier, fact->m_dpdk_memory_pool_rx) != 0) {
         rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", fact->dpdk_port_identifier);
     }
 
