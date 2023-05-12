@@ -1761,6 +1761,7 @@ static int print_opcodes(FILE *fp, const struct descriptor *descriptor, uint32_t
   enum dds_stream_typecode optype, subtype;
   char *type = NULL;
   const char *seps[] = { ", ", ",\n  " };
+  const char *sep = "  ";
   uint32_t cnt = 0;
 
   if (IDL_PRINTA(&type, print_type, descriptor->topic) < 0)
@@ -1777,7 +1778,7 @@ static int print_opcodes(FILE *fp, const struct descriptor *descriptor, uint32_t
       return -1;
     for (size_t op = 0, brk = 0; op < ctype->instructions.count; op++) {
       inst = &ctype->instructions.table[op];
-      const char *sep = seps[op == brk];
+      sep = seps[op == brk];
       switch (inst->type) {
         case OPCODE:
           sep = op ? seps[1] : "  "; /* indent, always */
@@ -1792,8 +1793,9 @@ static int print_opcodes(FILE *fp, const struct descriptor *descriptor, uint32_t
             brk = op + 3;
           else if (optype == DDS_OP_VAL_BST)
             brk = op + 3;
-          else if (optype == DDS_OP_VAL_EXT)
+          else if (optype == DDS_OP_VAL_EXT) {
             brk = op + 3;
+          }
           else if (optype == DDS_OP_VAL_ARR || optype == DDS_OP_VAL_SEQ || optype == DDS_OP_VAL_BSQ) {
             subtype = DDS_OP_SUBTYPE(inst->data.opcode.code);
             brk = op + (optype == DDS_OP_VAL_SEQ ? 2 : 3);
@@ -1883,7 +1885,7 @@ static int print_opcodes(FILE *fp, const struct descriptor *descriptor, uint32_t
 
   for (size_t op = 0, brk = 0; op < descriptor->key_offsets.count; op++) {
     inst = &descriptor->key_offsets.table[op];
-    const char *sep = seps[op == brk];
+    sep = seps[op == brk];
     switch (inst->type) {
       case KEY_OFFSET:
       {
@@ -2265,7 +2267,7 @@ static void descriptor_keys_free(struct key_meta_data *keys, uint32_t n_keys)
 static int print_keys(FILE *fp, struct descriptor *descriptor, uint32_t offset)
 {
   char *typestr = NULL;
-  const char *fmt;
+  const char *fmt, *sep="";
 
   if (descriptor->n_keys == 0)
     return 0;
@@ -2275,7 +2277,7 @@ static int print_keys(FILE *fp, struct descriptor *descriptor, uint32_t offset)
   fmt = "static const dds_key_descriptor_t %s_keys[%"PRIu32"] =\n{\n";
   if (idl_fprintf(fp, fmt, typestr, descriptor->n_keys) < 0)
     goto err_print;
-  const char *sep = "";
+  sep = "";
   fmt = "%s  { \"%s\", %"PRIu32", %"PRIu32" }";
   for (uint32_t k=0; k < descriptor->n_keys; k++) {
     if (idl_fprintf(fp, fmt, sep, descriptor->keys[k].name, offset + descriptor->keys[k].inst_offs, descriptor->keys[k].key_idx) < 0)

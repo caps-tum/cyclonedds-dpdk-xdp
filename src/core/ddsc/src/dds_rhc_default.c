@@ -25,7 +25,6 @@
 
 #include "dds__entity.h"
 #include "dds__reader.h"
-#include "dds__loan.h"
 #include "dds/ddsc/dds_rhc.h"
 #include "dds__rhc_default.h"
 #include "dds/ddsi/ddsi_tkmap.h"
@@ -2035,7 +2034,7 @@ static bool read_take_to_invsample_ref (const struct ddsi_sertype * __restrict t
   return true;
 }
 
-static int32_t read_w_qminv_inst (struct dds_rhc_default * const __restrict rhc, struct rhc_instance * const __restrict inst, void * __restrict * __restrict values, dds_sample_info_t * __restrict info_seq, const int32_t max_samples, const uint32_t qminv, const dds_querycond_mask_t qcmask, read_take_to_sample_t to_sample, read_take_to_invsample_t to_invsample, dds_loan_manager_t *loan_out, dds_loan_manager_t *loan_pool)
+static int32_t read_w_qminv_inst (struct dds_rhc_default * const __restrict rhc, struct rhc_instance * const __restrict inst, void * __restrict * __restrict values, dds_sample_info_t * __restrict info_seq, const int32_t max_samples, const uint32_t qminv, const dds_querycond_mask_t qcmask, read_take_to_sample_t to_sample, read_take_to_invsample_t to_invsample)
 {
   assert (max_samples > 0);
   if (inst_is_empty (inst) || (qmask_of_inst (inst) & qminv) != 0)
@@ -2049,7 +2048,6 @@ static int32_t read_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
   struct trigger_info_qcond trig_qc;
   const uint32_t nread = inst_nread (inst);
   int32_t n = 0;
-  bool use_loans = (loan_out != NULL && loan_pool != NULL);
   get_trigger_info_pre (&pre, inst);
   init_trigger_info_qcond (&trig_qc);
 
@@ -2062,23 +2060,7 @@ static int32_t read_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
       {
         /* sample state matches too */
         set_sample_info (info_seq + n, inst, sample);
-        if (use_loans && *(values + n) == NULL)  //this indicates that memory needs to be assigned for this sample
-        {
-          dds_loaned_sample_t *ls = sample->sample->loan;
-          if (!ls)
-          {
-            ls = dds_loan_manager_get_loan(loan_pool);
-            to_sample (sample->sample, &(ls->sample_ptr), 0, 0);
-          }
-          dds_loan_manager_move_loan(loan_out, ls);
-          *(values + n) = ls->sample_ptr;
-        }
-        else
-        {
-          //copy data into externally managed sample
-          to_sample (sample->sample, values + n, 0, 0);
-        }
-
+        to_sample (sample->sample, values + n, 0, 0);
         if (!sample->isread)
         {
           read_sample_update_conditions (rhc, &pre, &post, &trig_qc, inst, sample->conds, false);
@@ -2096,14 +2078,7 @@ static int32_t read_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
   if (inst->inv_exists && n < max_samples && (qmask_of_invsample (inst) & qminv) == 0 && (qcmask == 0 || (inst->conds & qcmask)))
   {
     set_sample_info_invsample (info_seq + n, inst);
-    if (*(values + n) == NULL)
-    {
-      dds_loaned_sample_t *ls = dds_loan_manager_get_loan(loan_pool);
-      dds_loan_manager_move_loan(loan_out, ls);
-      *(values + n) = ls->sample_ptr;
-    }
     to_invsample (rhc->type, inst->tk->m_sample, values + n, 0, 0);
-
     if (!inst->inv_isread)
     {
       read_sample_update_conditions (rhc, &pre, &post, &trig_qc, inst, inst->conds, false);
@@ -2137,7 +2112,7 @@ static int32_t read_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
   return n;
 }
 
-static int32_t take_w_qminv_inst (struct dds_rhc_default * const __restrict rhc, struct rhc_instance * __restrict * __restrict instptr, void * __restrict * __restrict values, dds_sample_info_t * __restrict info_seq, const int32_t max_samples, const uint32_t qminv, const dds_querycond_mask_t qcmask, read_take_to_sample_t to_sample, read_take_to_invsample_t to_invsample, dds_loan_manager_t *loan_out, dds_loan_manager_t *loan_pool)
+static int32_t take_w_qminv_inst (struct dds_rhc_default * const __restrict rhc, struct rhc_instance * __restrict * __restrict instptr, void * __restrict * __restrict values, dds_sample_info_t * __restrict info_seq, const int32_t max_samples, const uint32_t qminv, const dds_querycond_mask_t qcmask, read_take_to_sample_t to_sample, read_take_to_invsample_t to_invsample)
 {
   struct rhc_instance *inst = *instptr;
   assert (max_samples > 0);
@@ -2151,7 +2126,6 @@ static int32_t take_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
   struct trigger_info_post post;
   struct trigger_info_qcond trig_qc;
   int32_t n = 0;
-  bool use_loans = (loan_out != NULL && loan_pool != NULL);
   get_trigger_info_pre (&pre, inst);
   init_trigger_info_qcond (&trig_qc);
 
@@ -2172,23 +2146,7 @@ static int32_t take_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
       {
         take_sample_update_conditions (rhc, &pre, &post, &trig_qc, inst, sample->conds, sample->isread);
         set_sample_info (info_seq + n, inst, sample);
-        if (use_loans && *(values + n) == NULL)
-        {
-          dds_loaned_sample_t *ls = sample->sample->loan;
-          if (!ls)
-          {
-            ls = dds_loan_manager_get_loan(loan_pool);
-            to_sample (sample->sample, &(ls->sample_ptr), 0, 0);
-          }
-          dds_loan_manager_move_loan(loan_out, ls);
-          *(values + n) = ls->sample_ptr;
-        }
-        else
-        {
-          //copy data into externally managed sample
-          to_sample (sample->sample, values + n, 0, 0);
-        }
-
+        to_sample (sample->sample, values + n, 0, 0);
         rhc->n_vsamples--;
         if (sample->isread)
         {
@@ -2203,7 +2161,7 @@ static int32_t take_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
             inst->latest = psample;
           psample->next = sample1;
         }
-        free_sample (rhc, inst, sample);  //CHECK???
+        free_sample (rhc, inst, sample);
         if (++n == max_samples)
           break;
       }
@@ -2219,12 +2177,6 @@ static int32_t take_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
 #endif
     take_sample_update_conditions (rhc, &pre, &post, &trig_qc, inst, inst->conds, inst->inv_isread);
     set_sample_info_invsample (info_seq + n, inst);
-    if (*(values + n) == NULL)
-    {
-      dds_loaned_sample_t *ls = dds_loan_manager_get_loan(loan_pool);
-      dds_loan_manager_move_loan(loan_out, ls);
-      *(values + n) = ls->sample_ptr;
-    }
     to_invsample (rhc->type, inst->tk->m_sample, values + n, 0, 0);
     inst_clear_invsample (rhc, inst, &dummy_trig_qc);
     ++n;
@@ -2252,7 +2204,7 @@ static int32_t take_w_qminv_inst (struct dds_rhc_default * const __restrict rhc,
   return n;
 }
 
-static int32_t read_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock, void * __restrict * __restrict values, dds_sample_info_t * __restrict info_seq, int32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond * __restrict cond, read_take_to_sample_t to_sample, read_take_to_invsample_t to_invsample, dds_loan_manager_t *loan_out, dds_loan_manager_t *loan_pool)
+static int32_t read_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock, void * __restrict * __restrict values, dds_sample_info_t * __restrict info_seq, int32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond * __restrict cond, read_take_to_sample_t to_sample, read_take_to_invsample_t to_invsample)
 {
   int32_t n = 0;
   assert (max_samples > 0);
@@ -2273,7 +2225,7 @@ static int32_t read_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock,
     struct rhc_instance template, *inst;
     template.iid = handle;
     if ((inst = ddsrt_hh_lookup (rhc->instances, &template)) != NULL)
-      n = read_w_qminv_inst (rhc, inst, values, info_seq, max_samples, qminv, qcmask, to_sample, to_invsample, loan_out, loan_pool);
+      n = read_w_qminv_inst (rhc, inst, values, info_seq, max_samples, qminv, qcmask, to_sample, to_invsample);
     else
       n = DDS_RETCODE_PRECONDITION_NOT_MET;
   }
@@ -2282,7 +2234,7 @@ static int32_t read_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock,
     struct rhc_instance * inst = oldest_nonempty_instance (rhc);
     struct rhc_instance * const end = inst;
     do {
-      n += read_w_qminv_inst(rhc, inst, values + n, info_seq + n, max_samples - n, qminv, qcmask, to_sample, to_invsample, loan_out, loan_pool);
+      n += read_w_qminv_inst(rhc, inst, values + n, info_seq + n, max_samples - n, qminv, qcmask, to_sample, to_invsample);
       inst = next_nonempty_instance (inst);
     } while (inst != end && n < max_samples);
   }
@@ -2297,7 +2249,7 @@ static int32_t read_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock,
   return n;
 }
 
-static int32_t take_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock, void * __restrict * __restrict values, dds_sample_info_t * __restrict info_seq, int32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond * __restrict cond, read_take_to_sample_t to_sample, read_take_to_invsample_t to_invsample, dds_loan_manager_t *loan_out, dds_loan_manager_t *loan_pool)
+static int32_t take_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock, void * __restrict * __restrict values, dds_sample_info_t * __restrict info_seq, int32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond * __restrict cond, read_take_to_sample_t to_sample, read_take_to_invsample_t to_invsample)
 {
   int32_t n = 0;
   assert (max_samples > 0);
@@ -2318,7 +2270,7 @@ static int32_t take_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock,
     struct rhc_instance template, *inst;
     template.iid = handle;
     if ((inst = ddsrt_hh_lookup (rhc->instances, &template)) != NULL)
-      n = take_w_qminv_inst (rhc, &inst, values, info_seq, max_samples, qminv, qcmask, to_sample, to_invsample, loan_out, loan_pool);
+      n = take_w_qminv_inst (rhc, &inst, values, info_seq, max_samples, qminv, qcmask, to_sample, to_invsample);
     else
       n = DDS_RETCODE_PRECONDITION_NOT_MET;
   }
@@ -2329,7 +2281,7 @@ static int32_t take_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock,
     while (n_insts-- > 0 && n < max_samples)
     {
       struct rhc_instance * const inst1 = next_nonempty_instance (inst);
-      n += take_w_qminv_inst (rhc, &inst, values + n, info_seq + n, max_samples - n, qminv, qcmask, to_sample, to_invsample, loan_out, loan_pool);
+      n += take_w_qminv_inst (rhc, &inst, values + n, info_seq + n, max_samples - n, qminv, qcmask, to_sample, to_invsample);
       inst = inst1;
     }
   }
@@ -2344,30 +2296,30 @@ static int32_t take_w_qminv (struct dds_rhc_default * __restrict rhc, bool lock,
   return n;
 }
 
-static int32_t dds_rhc_read_w_qminv (struct dds_rhc_default *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond *cond, dds_loan_manager_t *loan_out, dds_loan_manager_t *loan_pool)
+static int32_t dds_rhc_read_w_qminv (struct dds_rhc_default *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond *cond)
 {
   assert (max_samples <= INT32_MAX);
-  return read_w_qminv (rhc, lock, values, info_seq, (int32_t) max_samples, qminv, handle, cond, read_take_to_sample, read_take_to_invsample, loan_out, loan_pool);
+  return read_w_qminv (rhc, lock, values, info_seq, (int32_t) max_samples, qminv, handle, cond, read_take_to_sample, read_take_to_invsample);
 }
 
-static int32_t dds_rhc_take_w_qminv (struct dds_rhc_default *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond *cond, dds_loan_manager_t *loan_out, dds_loan_manager_t *loan_pool)
+static int32_t dds_rhc_take_w_qminv (struct dds_rhc_default *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond *cond)
 {
   assert (max_samples <= INT32_MAX);
-  return take_w_qminv (rhc, lock, values, info_seq, (int32_t) max_samples, qminv, handle, cond, read_take_to_sample, read_take_to_invsample, loan_out, loan_pool);
+  return take_w_qminv (rhc, lock, values, info_seq, (int32_t) max_samples, qminv, handle, cond, read_take_to_sample, read_take_to_invsample);
 }
 
 static int32_t dds_rhc_readcdr_w_qminv (struct dds_rhc_default *rhc, bool lock, struct ddsi_serdata **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond *cond)
 {
   DDSRT_STATIC_ASSERT (sizeof (void *) == sizeof (struct ddsi_serdata *));
   assert (max_samples <= INT32_MAX);
-  return read_w_qminv (rhc, lock, (void **) values, info_seq, (int32_t) max_samples, qminv, handle, cond, read_take_to_sample_ref, read_take_to_invsample_ref, NULL, NULL);
+  return read_w_qminv (rhc, lock, (void **) values, info_seq, (int32_t) max_samples, qminv, handle, cond, read_take_to_sample_ref, read_take_to_invsample_ref);
 }
 
 static int32_t dds_rhc_takecdr_w_qminv (struct dds_rhc_default *rhc, bool lock, struct ddsi_serdata **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t qminv, dds_instance_handle_t handle, dds_readcond *cond)
 {
   DDSRT_STATIC_ASSERT (sizeof (void *) == sizeof (struct ddsi_serdata *));
   assert (max_samples <= INT32_MAX);
-  return take_w_qminv (rhc, lock, (void **) values, info_seq, (int32_t) max_samples, qminv, handle, cond, read_take_to_sample_ref, read_take_to_invsample_ref, NULL, NULL);
+  return take_w_qminv (rhc, lock, (void **) values, info_seq, (int32_t) max_samples, qminv, handle, cond, read_take_to_sample_ref, read_take_to_invsample_ref);
 }
 
 /*************************
@@ -2751,18 +2703,18 @@ static bool update_conditions_locked (struct dds_rhc_default *rhc, bool called_f
  ******  READ/TAKE  ******
  *************************/
 
-static int32_t dds_rhc_default_read (struct dds_rhc *rhc_common, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, dds_readcond *cond, dds_loan_manager_t *loan_out, dds_loan_manager_t *loan_pool)
+static int32_t dds_rhc_default_read (struct dds_rhc *rhc_common, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, dds_readcond *cond)
 {
   struct dds_rhc_default * const rhc = (struct dds_rhc_default *) rhc_common;
   uint32_t qminv = qmask_from_mask_n_cond (mask, cond);
-  return dds_rhc_read_w_qminv (rhc, lock, values, info_seq, max_samples, qminv, handle, cond, loan_out, loan_pool);
+  return dds_rhc_read_w_qminv (rhc, lock, values, info_seq, max_samples, qminv, handle, cond);
 }
 
-static int32_t dds_rhc_default_take (struct dds_rhc *rhc_common, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, dds_readcond *cond, dds_loan_manager_t *loan_out, dds_loan_manager_t *loan_pool)
+static int32_t dds_rhc_default_take (struct dds_rhc *rhc_common, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, dds_readcond *cond)
 {
   struct dds_rhc_default * const rhc = (struct dds_rhc_default *) rhc_common;
   uint32_t qminv = qmask_from_mask_n_cond(mask, cond);
-  return dds_rhc_take_w_qminv (rhc, lock, values, info_seq, max_samples, qminv, handle, cond, loan_out, loan_pool);
+  return dds_rhc_take_w_qminv (rhc, lock, values, info_seq, max_samples, qminv, handle, cond);
 }
 
 static int32_t dds_rhc_default_readcdr (struct dds_rhc *rhc_common, bool lock, struct ddsi_serdata ** values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t sample_states, uint32_t view_states, uint32_t instance_states, dds_instance_handle_t handle)

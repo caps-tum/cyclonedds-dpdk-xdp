@@ -54,7 +54,7 @@ enum ddsi_boolean_default {
   DDSI_BOOLDEF_TRUE
 };
 
-/* deprecated shm log level */
+#ifdef DDS_HAS_SHM
 enum ddsi_shm_loglevel {
   DDSI_SHM_OFF = 0,
   DDSI_SHM_FATAL,
@@ -64,6 +64,7 @@ enum ddsi_shm_loglevel {
   DDSI_SHM_DEBUG,
   DDSI_SHM_VERBOSE
 };
+#endif
 
 #define DDSI_PARTICIPANT_INDEX_AUTO -1
 #define DDSI_PARTICIPANT_INDEX_NONE -2
@@ -231,18 +232,6 @@ enum ddsi_config_entity_naming_mode {
   DDSI_ENTITY_NAMING_DEFAULT_FANCY
 };
 
-struct ddsi_config_psmx {
-  char *name;
-  char *library;
-  char *config;
-  struct ddsi_config_maybe_int32 priority;
-};
-
-struct ddsi_config_psmx_listelem {
-  struct ddsi_config_psmx_listelem *next;
-  struct ddsi_config_psmx cfg;
-};
-
 /* Expensive checks (compiled in when NDEBUG not defined, enabled only if flag set in xchecks) */
 #define DDSI_XCHECK_WHC 1u
 #define DDSI_XCHECK_RHC 2u
@@ -265,7 +254,6 @@ struct ddsi_config
 
   /* interfaces */
   struct ddsi_config_network_interface_listelem *network_interfaces;
-  struct ddsi_config_psmx_listelem *psmx_instances;
 
   /* deprecated interface support */
   char *depr_networkAddressString;
@@ -417,11 +405,12 @@ struct ddsi_config
   struct ddsi_config_omg_security_listelem *omg_security_configuration;
 #endif
 
-  /* deprecated shm options */
+#ifdef DDS_HAS_SHM
   int enable_shm;
   char *shm_locator;
   char *iceoryx_service;
   enum ddsi_shm_loglevel shm_log_lvl;
+#endif
 
   enum ddsi_config_entity_naming_mode entity_naming_mode;
   ddsrt_prng_seed_t entity_naming_seed;

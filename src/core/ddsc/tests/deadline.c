@@ -33,7 +33,11 @@
 
 #define DDS_DOMAINID_PUB 0
 #define DDS_DOMAINID_SUB 1
+#ifdef DDS_HAS_SHM
+#define DDS_CONFIG_NO_PORT_GAIN "${CYCLONEDDS_URI}${CYCLONEDDS_URI:+,}<Discovery><ExternalDomainId>0</ExternalDomainId></Discovery><Domain id=\"any\"><SharedMemory><Enable>false</Enable></SharedMemory></Domain>"
+#else
 #define DDS_CONFIG_NO_PORT_GAIN "${CYCLONEDDS_URI}${CYCLONEDDS_URI:+,}<Discovery><ExternalDomainId>0</ExternalDomainId></Discovery>"
+#endif
 
 static dds_entity_t g_domain = 0;
 static dds_entity_t g_participant = 0;
@@ -546,7 +550,6 @@ CU_Test(ddsc_deadline, update)
     cb,
     NULL, 0, true);  //this should sleep the thread that updates the statuses from 0.5*DEADLINE to 1.5*DEADLINE
   CU_ASSERT_FATAL(xev != NULL);
-  assert(xev != NULL); // Clang static analyzer
 
   Space_Type1 msg1 = { 1, 0, 0 },
               msg2 = { 2, 0, 0 };

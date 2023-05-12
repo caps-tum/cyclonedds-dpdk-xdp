@@ -22,10 +22,6 @@ idlc_generate(TARGET DataRepresentationTypes FILES DataRepresentationTypes.idl W
 idlc_generate(TARGET MinXcdrVersion FILES MinXcdrVersion.idl)
 idlc_generate(TARGET CdrStreamOptimize FILES CdrStreamOptimize.idl WARNINGS no-implicit-extensibility)
 idlc_generate(TARGET CdrStreamSkipDefault FILES CdrStreamSkipDefault.idl)
-idlc_generate(TARGET VIDataModels FILES VIDataModels.idl WARNINGS no-implicit-extensibility)
-idlc_generate(TARGET CdrStreamDataTypeInfo FILES CdrStreamDataTypeInfo.idl WARNINGS no-implicit-extensibility)
-idlc_generate(TARGET Array100 FILES Array100.idl WARNINGS no-implicit-extensibility)
-idlc_generate(TARGET DynamicData FILES DynamicData.idl WARNINGS no-implicit-extensibility)
 if(ENABLE_TYPE_DISCOVERY)
   idlc_generate(TARGET XSpace FILES XSpace.idl XSpaceEnum.idl XSpaceMustUnderstand.idl XSpaceTypeConsistencyEnforcement.idl WARNINGS no-implicit-extensibility no-inherit-appendable)
   idlc_generate(TARGET XSpaceNoTypeInfo FILES XSpaceNoTypeInfo.idl NO_TYPE_INFO WARNINGS no-implicit-extensibility)
@@ -93,7 +89,6 @@ set(ddsc_test_sources
     "test_oneliner.c"
     "test_oneliner.h"
     "cdrstream.c"
-    "psmx.c"
   )
 
 if(ENABLE_LIFESPAN)
@@ -128,9 +123,14 @@ target_include_directories(
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsi/include>"
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsi/src>"
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../cdr/include>")
+if(ENABLE_SHM)
+  target_include_directories(
+    cunit_ddsc PRIVATE
+    "$<BUILD_INTERFACE:$<TARGET_PROPERTY:iceoryx_binding_c::iceoryx_binding_c,INTERFACE_INCLUDE_DIRECTORIES>>")
+endif()
 
 target_link_libraries(cunit_ddsc PRIVATE
-  RoundTrip Space TypesArrayKey WriteTypes InstanceHandleTypes RWData CreateWriter DataRepresentationTypes MinXcdrVersion CdrStreamOptimize CdrStreamSkipDefault CdrStreamDataTypeInfo VIDataModels DynamicData Array100 ddsc)
+  RoundTrip Space TypesArrayKey WriteTypes InstanceHandleTypes RWData CreateWriter DataRepresentationTypes MinXcdrVersion CdrStreamOptimize CdrStreamSkipDefault ddsc)
 
 if(ENABLE_TYPE_DISCOVERY)
   target_link_libraries(cunit_ddsc PRIVATE
@@ -161,27 +161,6 @@ if(ENABLE_DEADLINE_MISSED)
   endforeach()
 endif()
 
-# PSMX implementation with Cyclone as transport, for testing
-idlc_generate(TARGET psmx_cdds_data FILES psmx_cdds_data.idl)
-set(psmx_cdds_sources
-  "psmx_cdds_impl.c"
-  "psmx_cdds_impl.h")
-add_library(psmx_cdds SHARED ${psmx_cdds_sources})
-target_include_directories(
-  psmx_cdds PRIVATE
-  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsi/include>")
-target_link_libraries(psmx_cdds PRIVATE ddsc psmx_cdds_data)
-
-get_test_property(CUnit_ddsc_psmx_basic ENVIRONMENT CUnit_ddsc_psmx_basic_env)
-set(CUnit_ddsc_psmx_basic_file "${CMAKE_CURRENT_LIST_DIR}/config_psmx.xml")
-set(CUnit_ddsc_psmx_basic_uri "file://${CUnit_ddsc_psmx_basic_file}")
-set(CUnit_ddsc_psmx_basic_env "CDDS_PSMX_LIB=$<TARGET_FILE:psmx_cdds>;CYCLONEDDS_URI=${CUnit_ddsc_psmx_basic_uri}")
-set_tests_properties(
-	CUnit_ddsc_psmx_basic
-	PROPERTIES
-		REQUIRED_FILES ${CUnit_ddsc_psmx_basic_file}
-		ENVIRONMENT "${CUnit_ddsc_psmx_basic_env}")
-
 configure_file("config_env.h.in" "config_env.h" @ONLY)
 
 add_executable(oneliner
@@ -198,4 +177,99 @@ target_include_directories(
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsi/src>"
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../cdr/include>")
 
+if(ENABLE_SHM)
+  target_include_directories(
+    oneliner PRIVATE
+    "$<BUILD_INTERFACE:$<TARGET_PROPERTY:iceoryx_binding_c::iceoryx_binding_c,INTERFACE_INCLUDE_DIRECTORIES>>")
+endif()
+
 target_link_libraries(oneliner PRIVATE RoundTrip Space ddsc)
+
+# Iceoryx itself isn't really supported yet on Windows, so it
+# better not be part of the tests.  That also saves us from
+# having to figure out now how to start/stop RouDi on Windows.
+if(ENABLE_SHM AND NOT DEFINED ENV{COLCON})
+  idlc_generate(TARGET Array100 FILES Array100.idl WARNINGS no-implicit-extensibility)
+  idlc_generate(TARGET DynamicData FILES DynamicData.idl WARNINGS no-implicit-extensibility)
+
+  add_cunit_executable(cunit_ddsc_iox
+    "iceoryx.c"
+    "test_util.c"
+    "test_util.h")
+  target_include_directories(
+    cunit_ddsc_iox PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/src/include/>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsc/src>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsi/include>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsi/src>"
+    "$<BUILD_INTERFACE:$<TARGET_PROPERTY:iceoryx_binding_c::iceoryx_binding_c,INTERFACE_INCLUDE_DIRECTORIES>>")
+
+  target_link_libraries(cunit_ddsc_iox PRIVATE RoundTrip Space Array100 DynamicData ddsc)
+
+  add_cunit_executable(cunit_ddsc_shm_serialization
+    "test_shm_serialization.c"
+    "test_util.c"
+    "test_util.h")
+  target_include_directories(
+    cunit_ddsc_shm_serialization PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/src/include/>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsc/src>"
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../ddsi/include>"
+    "$<BUILD_INTERFACE:$<TARGET_PROPERTY:iceoryx_binding_c::iceoryx_binding_c,INTERFACE_INCLUDE_DIRECTORIES>>")
+
+  target_link_libraries(cunit_ddsc_shm_serialization PRIVATE RoundTrip Space DynamicData ddsc)
+
+  # We need to start RouDi, so we need to find it
+  find_program(ICEORYX_ROUDI iox-roudi REQUIRED)
+
+  # The run-time library paths aren't set in iox-roudi so we need to set
+  # (DY)LD_LIBRARY_PATH.  CTest can't start a daemon, so we have to use
+  # a wrapper to start a process, for which bash makes the most sense
+  # when targetting just Linux and macOS.  However, that means macOS
+  # will strip DYLD_LIBRARY_PATH from the environment and therefore we
+  # cannot rely on "set_test_library_paths".
+  find_library(ICEORYX_LIB iceoryx_binding_c)
+  get_filename_component(ICEORYX_LIB_PATH ${ICEORYX_LIB} DIRECTORY)
+  if(APPLE)
+    set(ICEORYX_ROUDI_LIBPATH "DYLD_LIBRARY_PATH=${ICEORYX_LIB_PATH}:$ENV{DYLD_LIBRARY_PATH}")
+  else()
+    set(ICEORYX_ROUDI_LIBPATH "LD_LIBRARY_PATH=${ICEORYX_LIB_PATH}:$ENV{LD_LIBRARY_PATH}")
+  endif()
+  # CTest waits until the child process terminates *AND* the stdin/stdout/stderr
+  # pipes are closed.  Redirecting the output to a file solves that problem.
+  #
+  # Write the process id of RouDi to ctest_fixture_iox_roudi.pid so we know what
+  # process to kill in the cleanup phase.
+  #
+  # Sleep + kill -0 to check that RouDi really did start, cat'ing the log file in case
+  # it failed to start.
+  add_test(NAME start_roudi COMMAND
+    bash -c
+    "\
+${ICEORYX_ROUDI_LIBPATH} ${ICEORYX_ROUDI} -c ${CMAKE_CURRENT_SOURCE_DIR}/iox_roudi_config.toml \
+  </dev/null >ctest_fixture_iox_roudi.output 2>&1 & echo $! > ctest_fixture_iox_roudi.pid ; \
+sleep 1 ; \
+cat ctest_fixture_iox_roudi.output ; \
+kill -0 `cat ctest_fixture_iox_roudi.pid`")
+  set_test_library_paths(start_roudi)
+
+  # SIGTERM should suffice for stopping RouDi
+  add_test(NAME stop_roudi COMMAND bash -c "kill `cat ctest_fixture_iox_roudi.pid` ; cat ctest_fixture_iox_roudi.output")
+
+  set_tests_properties(start_roudi PROPERTIES FIXTURES_SETUP iox)
+  set_tests_properties(stop_roudi PROPERTIES FIXTURES_CLEANUP iox)
+  set_tests_properties(start_roudi stop_roudi PROPERTIES RESOURCE_LOCK iox_lock)
+
+  foreach(t
+      iceoryx_one_writer
+      iceoryx_one_writer_dynsize
+      iceoryx_one_writer_dynsize_strkey
+      iceoryx_return_loan
+      iceoryx_partition_xtalk
+      shm_serialization_get_serialized_size
+      shm_serialization_serialize_into
+      shm_serialization_transmit_dynamic_type)
+    set_tests_properties(CUnit_ddsc_${t} PROPERTIES FIXTURES_REQUIRED iox)
+    set_tests_properties(CUnit_ddsc_${t} PROPERTIES RESOURCE_LOCK iox_lock)
+  endforeach()
+endif()

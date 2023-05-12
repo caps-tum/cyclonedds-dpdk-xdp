@@ -13,7 +13,6 @@
 
 #include "dds/ddsrt/static_assert.h"
 #include "dds/ddsi/ddsi_rhc.h"
-#include "dds__loan.h"
 
 #define NO_STATE_MASK_SET   (DDS_ANY_STATE + 1)
 
@@ -27,7 +26,7 @@ struct dds_reader;
 struct ddsi_tkmap;
 
 typedef dds_return_t (*dds_rhc_associate_t) (struct dds_rhc *rhc, struct dds_reader *reader, const struct ddsi_sertype *type, struct ddsi_tkmap *tkmap);
-typedef int32_t (*dds_rhc_read_take_t) (struct dds_rhc *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, struct dds_readcond *cond, dds_loan_manager_t *loans, dds_loan_manager_t *loan_pool);
+typedef int32_t (*dds_rhc_read_take_t) (struct dds_rhc *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, struct dds_readcond *cond);
 typedef int32_t (*dds_rhc_read_take_cdr_t) (struct dds_rhc *rhc, bool lock, struct ddsi_serdata **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t sample_states, uint32_t view_states, uint32_t instance_states, dds_instance_handle_t handle);
 
 typedef bool (*dds_rhc_add_readcondition_t) (struct dds_rhc *rhc, struct dds_readcond *cond);
@@ -89,13 +88,13 @@ DDS_INLINE_EXPORT inline void dds_rhc_free (struct dds_rhc *rhc) {
 }
 
 /** @component rhc */
-DDS_INLINE_EXPORT inline int32_t dds_rhc_read (struct dds_rhc *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, struct dds_readcond *cond, dds_loan_manager_t *loans, dds_loan_manager_t *loan_pool) {
-  return (rhc->common.ops->read) (rhc, lock, values, info_seq, max_samples, mask, handle, cond, loans, loan_pool);
+DDS_INLINE_EXPORT inline int32_t dds_rhc_read (struct dds_rhc *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, struct dds_readcond *cond) {
+  return (rhc->common.ops->read) (rhc, lock, values, info_seq, max_samples, mask, handle, cond);
 }
 
 /** @component rhc */
-DDS_INLINE_EXPORT inline int32_t dds_rhc_take (struct dds_rhc *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, struct dds_readcond *cond, dds_loan_manager_t *loans, dds_loan_manager_t *loan_pool) {
-  return rhc->common.ops->take (rhc, lock, values, info_seq, max_samples, mask, handle, cond, loans, loan_pool);
+DDS_INLINE_EXPORT inline int32_t dds_rhc_take (struct dds_rhc *rhc, bool lock, void **values, dds_sample_info_t *info_seq, uint32_t max_samples, uint32_t mask, dds_instance_handle_t handle, struct dds_readcond *cond) {
+  return rhc->common.ops->take (rhc, lock, values, info_seq, max_samples, mask, handle, cond);
 }
 
 /** @component rhc */

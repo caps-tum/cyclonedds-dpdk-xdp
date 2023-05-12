@@ -111,7 +111,7 @@ static void setup (void)
   assert (cfgst != NULL);
   ddsi_config_prep (&gv, cfgst);
   rbufpool = ddsi_rbufpool_new (&gv.logconfig, 131072, 65536);
-  ddsi_init (&gv, NULL);
+  ddsi_init (&gv);
 }
 
 static void teardown (void)

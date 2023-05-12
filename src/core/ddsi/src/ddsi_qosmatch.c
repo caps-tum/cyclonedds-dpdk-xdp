@@ -209,11 +209,6 @@ bool ddsi_qos_match_mask_p (
     *reason = DDS_PARTITION_QOS_POLICY_ID;
     return false;
   }
-  /*FIXME: remove?
-  if ((mask & QP_PSMX) && !data_representation_match_p (rd_qos, wr_qos)) {
-    *reason = DDS_PSMX_QOS_POLICY_ID;
-    return false;
-  }*/
   if ((mask & DDSI_QP_DATA_REPRESENTATION) && !data_representation_match_p (rd_qos, wr_qos)) {
     *reason = DDS_DATA_REPRESENTATION_QOS_POLICY_ID;
     return false;

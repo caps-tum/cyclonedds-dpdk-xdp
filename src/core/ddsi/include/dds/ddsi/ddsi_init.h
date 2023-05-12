@@ -13,7 +13,6 @@
 
 #include <stdbool.h>
 #include "dds/export.h"
-#include "dds/ddsi/ddsi_psmx.h"
 
 #if defined (__cplusplus)
 extern "C" {
@@ -26,7 +25,7 @@ struct ddsi_domaingv;
 int ddsi_config_prep (struct ddsi_domaingv *gv, struct ddsi_cfgst *cfgst);
 
 /** @component ddsi_init */
-int ddsi_init (struct ddsi_domaingv *gv, struct ddsi_psmx_instance_locators *psmx_locators);
+int ddsi_init (struct ddsi_domaingv *gv);
 
 /** @component ddsi_init */
 int ddsi_start (struct ddsi_domaingv *gv);
