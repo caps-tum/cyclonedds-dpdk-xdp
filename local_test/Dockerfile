@@ -11,6 +11,8 @@ RUN apt update && DEBIAN_FRONTEND=noninteractive TZ=Europe/Berlin apt install -y
 RUN wget https://fast.dpdk.org/rel/dpdk-22.11.1.tar.xz && tar xf dpdk-22.11.1.tar.xz
 RUN cd dpdk-stable-22.11.1 && pwd && meson setup build && cd build && ninja && ninja install && ldconfig
 
+# CycloneDDS CUnit tests
+RUN apt update && DEBIAN_FRONTEND=noninteractive TZ=Europe/Berlin apt install -y libcunit1-dev
 
 # SSH server
 RUN apt update && DEBIAN_FRONTEND=noninteractive TZ=Europe/Berlin apt install openssh-server sudo gdb -y
