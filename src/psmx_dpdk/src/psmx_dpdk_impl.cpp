@@ -58,10 +58,11 @@ namespace dpdk_psmx {
     // DPDK Packets
     struct dpdk_packet {
         struct rte_ether_hdr header;
-        struct dds_psmx_metadata data;
+        struct dds_psmx_metadata metadata;
+        char payload[0];
 
         static size_t dataSizeToActualSize(size_t requestedSize) {
-            return requestedSize + offsetof(dpdk_packet, data);
+            return requestedSize + offsetof(dpdk_packet, metadata);
         }
     };
 
@@ -316,6 +317,9 @@ namespace dpdk_psmx {
 
         static_assert(sizeof(node_id) > sizeof(addr.addr_bytes), "Cannot fit DPDK device id into PSMX identifier.");
         std::memcpy(&node_id, addr.addr_bytes, sizeof(addr.addr_bytes));
+//        node_id = 0x1337;
+//        node_id = fallback;
+        std::cerr << "Using node id: " << node_id << std::endl;
     }
 
     struct dpdk_psmx_topic : public dds_psmx_topic_t {
@@ -426,35 +430,34 @@ namespace dpdk_psmx {
         uint32_t sample_size;
     };
 
-    static constexpr uint32_t dpdk_padding =
-            sizeof(dds_psmx_metadata_t) % 8 ? (sizeof(dds_psmx_metadata_t) / 8 + 1) * 8 : sizeof(dds_psmx_metadata_t);
+    static constexpr uint32_t dpdk_padding = offsetof(dpdk_packet, payload);
 
     struct dpdk_loaned_sample : public dds_loaned_sample_t {
-        dpdk_loaned_sample(struct dds_psmx_endpoint *origin, uint32_t sz, dpdk_packet *ptr,
-                           dds_loaned_sample_state_t st, rte_mbuf *mbuf_handle);
+        dpdk_loaned_sample(struct dds_psmx_endpoint *origin, dpdk_packet *ptr, rte_mbuf *mbuf_handle);
 
         ~dpdk_loaned_sample();
 
         rte_mbuf *mbuf_handle;
     };
 
-    dpdk_loaned_sample::dpdk_loaned_sample(struct dds_psmx_endpoint *origin, uint32_t sz, dpdk_packet *ptr,
-                                           dds_loaned_sample_state_t st, rte_mbuf *mbuf_handle) :
+    dpdk_loaned_sample::dpdk_loaned_sample(struct dds_psmx_endpoint *origin, dpdk_packet *packet,
+                                           rte_mbuf *mbuf_handle) :
             dds_loaned_sample_t{
                     .ops = ls_ops,
                     .loan_origin = origin,
                     .manager = nullptr,
-                    .metadata = &ptr->data,
-                    .sample_ptr = ((char *) &ptr->data) + dpdk_padding,  //alignment?
+                    .metadata = &packet->metadata,
+                    .sample_ptr = packet->payload,  //alignment?
                     .loan_idx = 0,
                     .refs = {.v = 0}
             },
             mbuf_handle(mbuf_handle) {
-        metadata->sample_state = st;
-        metadata->data_type = origin->psmx_topic->data_type;
-        metadata->data_origin = origin->psmx_topic->psmx_instance->node_id;
-        metadata->sample_size = sz;
-        metadata->block_size = sz + dpdk_padding;
+//        metadata->sample_state = st;
+        // TODO: This is written for outgoing samples, should be different when sample is received?
+//        metadata->data_type = origin->psmx_topic->data_type;
+//        metadata->data_origin = origin->psmx_topic->psmx_instance->node_id;
+//        metadata->sample_size = sz;
+//        metadata->block_size = sz + dpdk_padding;
 
     }
 
@@ -580,8 +583,17 @@ namespace dpdk_psmx {
                 throw std::runtime_error("Failed to allocate memory in packet.");
             }
             auto *loan = new dpdk_loaned_sample(
-                    psmx_endpoint, size_requested, data_buffer, DDS_LOANED_SAMPLE_STATE_UNITIALIZED, mbuf
+                    psmx_endpoint, data_buffer, mbuf
             );
+
+            loan->metadata->sample_state = DDS_LOANED_SAMPLE_STATE_UNITIALIZED;
+            loan->metadata->sample_size = size_requested;
+            loan->metadata->block_size = size_requested + dpdk_padding;
+            loan->metadata->data_origin = psmx_endpoint->psmx_topic->psmx_instance->node_id;
+            loan->metadata->data_type = psmx_endpoint->psmx_topic->data_type;
+            loan->loan_idx = 0;
+            ddsrt_atomic_st32(&loan->refs, 0);
+
             // Set destination MAC to broadcast
             for (unsigned char &addr_byte: data_buffer->header.d_addr.addr_bytes) {
                 addr_byte = 0xFF;
@@ -632,8 +644,8 @@ namespace dpdk_psmx {
 //        publisher->publish(data->metadata);
 
 
-        data->metadata = NULL;
-        data->sample_ptr = NULL;
+//        data->metadata = NULL;
+//        data->sample_ptr = NULL;
 
         return DDS_RETCODE_OK;
     }
@@ -644,9 +656,8 @@ namespace dpdk_psmx {
                " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
                RTE_ETHER_ADDR_BYTES(&packet->header.d_addr));
         printf("DPDK: incoming sample at %p is %i bytes and has state %i\n",
-               packet, packet->data.sample_size, packet->data.sample_state);
-        return new dpdk_loaned_sample(psmx_endpoint, packet->data.sample_size, packet,
-                                      packet->data.sample_state, mbuf_handle);
+               packet, packet->metadata.sample_size, packet->metadata.sample_state);
+        return new dpdk_loaned_sample(psmx_endpoint, packet, mbuf_handle);
     }
 
     static dds_loaned_sample_t *dpdk_take(struct dds_psmx_endpoint *psmx_endpoint) {
