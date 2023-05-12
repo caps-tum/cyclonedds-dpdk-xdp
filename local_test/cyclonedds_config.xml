@@ -4,9 +4,9 @@
         <General>
             <Transport>dpdk_l2</Transport>
         </General>
-        <Tracing>
-            <Verbosity>fine</Verbosity>
-            <OutputFile>stdout</OutputFile>
-        </Tracing>
+<!--        <Tracing>-->
+<!--            <Verbosity>fine</Verbosity>-->
+<!--            <OutputFile>stdout</OutputFile>-->
+<!--        </Tracing>-->
     </Domain>
 </CycloneDDS>

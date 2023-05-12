@@ -98,8 +98,7 @@ static void copy_mac_address_and_zero(void* dest, size_t offset, struct rte_ethe
 }
 
 
-static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned char * buf, size_t len, bool allow_spurious, ddsi_locator_t *srcloc)
-{
+static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned char * buf, size_t len, bool allow_spurious, ddsi_locator_t *srcloc) {
 //    struct msghdr msghdr;
 //    struct sockaddr_ll src;
 //    struct iovec msg_iov;
@@ -119,31 +118,33 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
 
 //    do {
 //        rc = ddsrt_recvmsg(((ddsi_dpdk_l2_conn_t) conn)->m_sock, &msghdr, 0, &bytes_received);
-        /* Get burst of RX packets, from first port of pair. */
-        struct rte_mbuf* mbuf = rte_pktmbuf_alloc(((dpdk_transport_factory_t)conn->m_factory)->m_dpdk_memory_pool);
-        uint16_t number_received = 0;
-        while(
-            (number_received = rte_eth_rx_burst(
-                ((dpdk_transport_factory_t) conn->m_factory)->dpdk_port_identifier, 0, &mbuf, 1)
-            ) == 0) {
-            rte_delay_us_block(100);
+    /* Get burst of RX packets, from first port of pair. */
+    struct rte_mbuf *mbuf = rte_pktmbuf_alloc(((dpdk_transport_factory_t) conn->m_factory)->m_dpdk_memory_pool);
+    uint16_t number_received;
+    ssize_t bytes_received;
+    uint8_t tries = 0;
+    while (true) {
+        number_received = rte_eth_rx_burst(
+                ((dpdk_transport_factory_t) conn->m_factory)->dpdk_port_identifier, 0, &mbuf, 1
+        );
+        if (number_received > 0) {
+            break;
         }
-        if(number_received != 1) {
-            DDS_CERROR(&conn->m_base.gv->logconfig,
-                       "Unexpected number of packets received %i (expected %i)", number_received, 1);
-            assert(0);
+        if (tries >= 5) {
+            bytes_received = DDS_RETCODE_TRY_AGAIN;
+            break;
         }
+        rte_delay_us_block(100);
+        tries++;
+    }
+    if (number_received == 1) {
 
         dpdk_l2_packet_t packet = rte_pktmbuf_mtod(mbuf, dpdk_l2_packet_t);
         uint16_t payload_size = calculate_payload_size(mbuf);
         assert(payload_size <= len);
         memcpy(buf, packet->payload, payload_size);
+        bytes_received = payload_size;
 
-        ssize_t bytes_received = payload_size;
-//    } while (rc == DDS_RETCODE_INTERRUPTED);
-
-    if (bytes_received > 0)
-    {
         if (srcloc)
         {
             srcloc->kind = DDSI_LOCATOR_KIND_DPDK_L2;
@@ -156,23 +157,16 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
             srcloc->port = packet->header.ether_type - DPDK_L2_ETHER_TYPE;
         }
 
-//        /* Check for udp packet truncation */
-//        if ((((size_t) bytes_received) > len)
-//            #if DDSRT_MSGHDR_FLAGS
-//            || (msghdr.msg_flags & MSG_TRUNC)
-//#endif
-//                )
-//        {
-//            char addrbuf[DDSI_LOCSTRLEN];
-//            (void) snprintf(addrbuf, sizeof(addrbuf), "[%02x:%02x:%02x:%02x:%02x:%02x]:%u",
-//                            src.sll_addr[0], src.sll_addr[1], src.sll_addr[2],
-//                            src.sll_addr[3], src.sll_addr[4], src.sll_addr[5], ntohs(src.sll_protocol));
-//            DDS_CWARNING(&conn->m_base.gv->logconfig, "%s => %d truncated to %d\n", addrbuf, (int)bytes_received, (int)len);
-//        }
+        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x).\n",
+               srcloc->port, bytes_received,
+               buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1]
+        );
+        assert(conn->m_base.m_port == srcloc->port);
     }
-    printf("DPDK: Read complete (%zi bytes: %02x %02x %02x ... %02x %02x %02x).\n", bytes_received,
-           buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1]
-    );
+    rte_pktmbuf_free(mbuf);
+
+//    } while (rc == DDS_RETCODE_INTERRUPTED);
+
     return bytes_received;
 }
 
@@ -215,44 +209,44 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
 //#ifdef MSG_NOSIGNAL
 //    sendflags |= MSG_NOSIGNAL;
 //#endif
-    assert(dpdk_l2_is_broadcast_locator(dst));
+    // TODO: Determine how we should filter packets.
+//    assert(dpdk_l2_is_broadcast_locator(dst));
 
     assert(flags == 0);
     size_t bytes_transferred = 0;
 
+    size_t total_iov_size = 0;
     for(size_t i = 0; i < niov; i++) {
-        struct rte_mbuf *buf = rte_pktmbuf_alloc(factory->m_dpdk_memory_pool);
-        assert(iov[i].iov_len < UINT16_MAX - sizeof(struct dpdk_l2_packet));
-        dpdk_l2_packet_t data_loc = (dpdk_l2_packet_t) rte_pktmbuf_append(
-            buf, (uint16_t) sizeof(struct dpdk_l2_packet) + (uint16_t) iov[i].iov_len
-        );
-        assert(data_loc);
-        assert(dst->port < UINT16_MAX);
-        data_loc->header.ether_type = DPDK_L2_ETHER_TYPE + (uint16_t)dst->port;
-        // VB: Source address: Current interface mac address. Destination address: Broadcast.
-        rte_eth_macaddr_get(0, &data_loc->header.s_addr);
-        memset(data_loc->header.d_addr.addr_bytes, 0xFF, sizeof(data_loc->header.d_addr.addr_bytes));
-        memcpy(data_loc->payload, iov[i].iov_base, iov[i].iov_len);
+        total_iov_size += iov[i].iov_len;
+    }
+
+    struct rte_mbuf *buf = rte_pktmbuf_alloc(factory->m_dpdk_memory_pool);
+    assert(total_iov_size < UINT16_MAX - sizeof(struct dpdk_l2_packet));
+    dpdk_l2_packet_t data_loc = (dpdk_l2_packet_t) rte_pktmbuf_append(
+            buf, (uint16_t) sizeof(struct dpdk_l2_packet) + (uint16_t) total_iov_size
+    );
+    assert(data_loc);
+    assert(dst->port < UINT16_MAX);
+    data_loc->header.ether_type = DPDK_L2_ETHER_TYPE + (uint16_t)dst->port;
+    // VB: Source address: Current interface mac address. Destination address: Broadcast.
+    rte_eth_macaddr_get(0, &data_loc->header.s_addr);
+    memset(data_loc->header.d_addr.addr_bytes, 0xFF, sizeof(data_loc->header.d_addr.addr_bytes));
+
+    for(size_t i = 0; i < niov; i++) {
+        memcpy(data_loc->payload + bytes_transferred, iov[i].iov_base, iov[i].iov_len);
         bytes_transferred += iov[i].iov_len;
-
-        int transmitted = rte_eth_tx_burst(factory->dpdk_port_identifier, uc->m_dpdk_queue_identifier, &buf, 1);
-        assert(transmitted == 1);
-
-        printf("DPDK: Write complete (%zi bytes: %02x %02x %02x ... %02x %02x %02x).\n", iov[i].iov_len,
-               data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[iov[i].iov_len-3], data_loc->payload[iov[i].iov_len-2], data_loc->payload[iov[i].iov_len-1]
-        );
-
-        rte_pktmbuf_free(buf);
-        rc = DDS_RETCODE_OK;
     }
 
-    if (rc != DDS_RETCODE_OK &&
-        rc != DDS_RETCODE_INTERRUPTED &&
-        rc != DDS_RETCODE_NOT_ALLOWED &&
-        rc != DDS_RETCODE_NO_CONNECTION)
-    {
-        DDS_CERROR(&conn->m_base.gv->logconfig, "ddsi_dpdk_l2_conn_write failed with retcode %d", rc);
-    }
+    int transmitted = rte_eth_tx_burst(factory->dpdk_port_identifier, uc->m_dpdk_queue_identifier, &buf, 1);
+    assert(transmitted == 1);
+
+    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x).\n",
+           dst->port, niov, bytes_transferred,
+           data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[bytes_transferred-3], data_loc->payload[bytes_transferred-2], data_loc->payload[bytes_transferred-1]
+    );
+
+    rte_pktmbuf_free(buf);
+    rc = DDS_RETCODE_OK;
     return (rc == DDS_RETCODE_OK ? (ssize_t) bytes_transferred : -1);
 }
 
@@ -261,8 +255,8 @@ static ddsrt_socket_t ddsi_dpdk_l2_conn_handle (struct ddsi_tran_base * base)
 //    return ((ddsi_dpdk_l2_conn_t) base)->m_sock;
     // We don't have a socket and nobody should request it.
     (void) base;
-    assert(0);
-//    return DDSRT_INVALID_SOCKET;
+//    assert(0);
+    return DDSRT_INVALID_SOCKET;
 }
 
 static bool ddsi_dpdk_l2_supports (const struct ddsi_tran_factory *fact, int32_t kind)
