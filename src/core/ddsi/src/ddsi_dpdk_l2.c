@@ -172,8 +172,10 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
                rte_mempool_avail_count(mempool)
         );
         assert(conn->m_base.m_port == srcloc->port);
+
+        // Packet is only allocated if it was successfully received.
+        rte_pktmbuf_free(mbuf[0]);
     }
-    rte_pktmbuf_free(mbuf[0]);
 
 //    } while (rc == DDS_RETCODE_INTERRUPTED);
 
