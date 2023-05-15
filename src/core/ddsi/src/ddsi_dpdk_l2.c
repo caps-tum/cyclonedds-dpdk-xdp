@@ -134,12 +134,12 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
         if (number_received > 0) {
             break;
         }
-        if (tries >= 200) {
+        if (tries >= 250) {
             bytes_received = DDS_RETCODE_TRY_AGAIN;
 //            printf("Read: TRYAGAIN (%i bufs available)\n", rte_mempool_avail_count(mempool));
             break;
         }
-        rte_delay_us_block(1000);
+//        rte_delay_us_block(100);
         tries++;
     }
     if (number_received == 1) {
