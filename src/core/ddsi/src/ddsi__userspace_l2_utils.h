@@ -20,9 +20,9 @@ char *ddsi_userspace_l2_locator_to_string (char *dst, size_t sizeof_dst, const d
 
 // Ethertype handling
 
-// The ethertype encodes the port number. The first four bits are static for identification, the last twelve bits the port number
-#define DDSI_USERSPACE_L2_ETHER_TYPE_BASE 0xD000
-#define DDSI_USERSPACE_L2_ETHER_TYPE_MAX 0xDFFF
+// The ethertype encodes the port number. The first 3 bits are static for identification, the last 12 bits the port number
+#define DDSI_USERSPACE_L2_ETHER_TYPE_BASE 0xA000
+#define DDSI_USERSPACE_L2_ETHER_TYPE_MAX 0xBFFF
 
 static inline uint16_t ddsi_userspace_l2_get_ethertype_for_port(uint16_t port) {
     assert(port < DDSI_USERSPACE_L2_ETHER_TYPE_MAX);
