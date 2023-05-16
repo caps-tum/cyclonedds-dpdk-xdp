@@ -367,38 +367,10 @@ static int ddsi_dpdk_l2_enumerate_interfaces (struct ddsi_tran_factory * fact, e
     (void)fact;
     (void)transport_selector;
 //  return ddsrt_getifaddrs(interface, afs);
-    ddsrt_ifaddrs_t *interface = malloc(1 * sizeof(ddsrt_ifaddrs_t));
-    if(!interface) {
-        assert(false);
-    }
 
-    interface->next = NULL;
-    interface->name = strdup("DPDK-0");
-    interface->index = 0;
-    interface->flags = IFF_BROADCAST | IFF_MULTICAST | IFF_UP | IFF_NOARP | IFF_PROMISC;
-    interface->type = DDSRT_IFTYPE_WIRED;
-
-    // TODO: Check whether we need an address family
-    interface->addr = ddsrt_malloc(sizeof(struct sockaddr));
-    interface->addr->sa_family = AF_UNSPEC;
     // TODO: We assume interface zero
     struct rte_ether_addr addr = get_dpdk_interface_mac_address(0);
-    DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(interface->addr->sa_data, 8, &addr);
-
-    // Netmask: FF:FF ... 00:00:00:00:00
-    interface->netmask = ddsrt_malloc(sizeof(struct sockaddr));
-    interface->netmask->sa_family = AF_UNSPEC;
-    memset(interface->netmask->sa_data, 0xFF, 8);
-    memset(interface->netmask->sa_data + 8, 0, 6);
-
-    // Broadcast address: 00:00 ... FF:FF:FF:FF:FF:FF
-    interface->broadaddr = ddsrt_malloc(sizeof(struct sockaddr));
-    interface->broadaddr->sa_family = AF_UNSPEC;
-    memset(interface->broadaddr->sa_data, 0, 8);
-    memset(interface->broadaddr->sa_data + 8, 0xFF, 6);
-
-    *interfaces = interface;
-    return DDS_RETCODE_OK;
+    return ddsi_userspace_create_fake_interface(interfaces, (userspace_l2_mac_addr *) &addr);
 }
 
 static int ddsi_dpdk_l2_locator_from_sockaddr (const struct ddsi_tran_factory *tran, ddsi_locator_t *loc, const struct sockaddr *sockaddr)

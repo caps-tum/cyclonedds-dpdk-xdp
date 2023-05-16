@@ -42,30 +42,26 @@ static struct xdp_program *prog;
 //bool custom_xsk = false;
 
 
-struct config {
-    enum xdp_attach_mode attach_mode;
-    __u32 xdp_flags;
-    int ifindex;
-    bool do_unload;
-    __u32 prog_id;
-    bool reuse_maps;
-    char pin_dir[512];
-    char filename[512];
-    char progname[32];
-    char src_mac[18];
-    char dest_mac[18];
-    __u16 xsk_bind_flags;
-    bool xsk_poll_mode;
-    bool unload_all;
-};
+//struct config {
+//    enum xdp_attach_mode attach_mode;
+//    __u32 xdp_flags;
+//    int ifindex;
+//    bool do_unload;
+//    __u32 prog_id;
+//    bool reuse_maps;
+//    char pin_dir[512];
+//    char filename[512];
+//    char progname[32];
+//    char src_mac[18];
+//    char dest_mac[18];
+//    __u16 xsk_bind_flags;
+//    bool xsk_poll_mode;
+//    bool unload_all;
+//};
 
 //struct config cfg = {
 //        .ifindex   = -1,
 //};
-
-typedef struct {
-    unsigned char bytes[6];
-} xdp_l2_mac_addr;
 
 struct xsk_umem_info {
     struct xsk_ring_prod rxFillRing;
@@ -95,7 +91,7 @@ typedef struct xdp_transport_factory {
     struct ddsi_tran_factory m_base;
 
     struct xsk_socket_info xskSocketInfo;
-    const char ifname[IF_NAMESIZE];
+    char *ifname;
     int ifindex;
     int xsk_if_queue;
     __u32 xdp_flags;
@@ -399,8 +395,8 @@ static bool ddsi_xdp_l2_supports (const struct ddsi_tran_factory *fact, int32_t 
     return (kind == DDSI_LOCATOR_KIND_XDP_L2);
 }
 
-static xdp_l2_mac_addr get_xdp_interface_mac_address(const char* ifname) {
-    xdp_l2_mac_addr address;
+static userspace_l2_mac_addr get_xdp_interface_mac_address(const char* ifname) {
+    userspace_l2_mac_addr address;
     int retval = ddsrt_eth_get_mac_addr(ifname, address.bytes);
     if (retval != DDS_RETCODE_OK) {
         abort();
@@ -418,7 +414,7 @@ static int ddsi_xdp_l2_conn_locator (struct ddsi_tran_factory * fact, struct dds
 
 
     // VB: The MAC address is in the last 6 bytes, the rest is zeroes.
-    xdp_l2_mac_addr addr = get_xdp_interface_mac_address(((xdp_transport_factory_t)fact)->ifname);
+    userspace_l2_mac_addr addr = get_xdp_interface_mac_address(((xdp_transport_factory_t)fact)->ifname);
     DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(loc->address, 10, &addr);
     return 0;
 }
@@ -490,7 +486,9 @@ static void ddsi_xdp_l2_deinit(struct ddsi_tran_factory * fact)
 
     /* Cleanup */
     xsk_socket__delete(factory->xskSocketInfo.xsk);
-    xsk_umem__delete(factory->xskSocketInfo.umem->umem);
+    if(factory->xskSocketInfo.umem != NULL) {
+        xsk_umem__delete(factory->xskSocketInfo.umem->umem);
+    }
 
     // VB: Remove XDP program
     struct xdp_multiprog *mp = NULL;
@@ -521,17 +519,20 @@ static void ddsi_xdp_l2_deinit(struct ddsi_tran_factory * fact)
 
 static int ddsi_xdp_l2_enumerate_interfaces (struct ddsi_tran_factory * fact, enum ddsi_transport_selector transport_selector, ddsrt_ifaddrs_t **interfaces)
 {
-    int afs[] = { AF_XDP, DDSRT_AF_TERM };
+//    int afs[] = { AF_XDP, DDSRT_AF_TERM };
     (void)fact;
     (void)transport_selector;
-    return ddsrt_getifaddrs(interfaces, afs);
+//    return ddsrt_getifaddrs(interfaces, afs);
+    userspace_l2_mac_addr addr = get_xdp_interface_mac_address(((struct xdp_transport_factory *) fact)->ifname);
+    return ddsi_userspace_create_fake_interface(interfaces, &addr);
 }
 
 static int ddsi_xdp_l2_locator_from_sockaddr (const struct ddsi_tran_factory *tran, ddsi_locator_t *loc, const struct sockaddr *sockaddr)
 {
     (void) tran;
 
-    if (sockaddr->sa_family != AF_XDP) {
+    // We use a fake interface, therefore AF_UNSPEC rather than AF_XDP
+    if (sockaddr->sa_family != AF_UNSPEC) {
         return -1;
     }
 
@@ -574,7 +575,6 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
 
 
     // XDP setup
-    int ret;
     void *packet_buffer;
     uint64_t packet_buffer_size;
     DECLARE_LIBBPF_OPTS(bpf_object_open_opts, opts);
@@ -582,9 +582,12 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
     struct rlimit rlim = {RLIM_INFINITY, RLIM_INFINITY};
     struct xsk_umem_info *umem;
     struct xsk_socket_info *xsk_socket;
-    pthread_t stats_poll_thread;
     int err;
     char errmsg[1024];
+
+    fact->ifname = strdup("eno2");
+    fact->ifindex = if_nametoindex(fact->ifname);
+
 
 //    /* Load custom program if configured */
 //    if (cfg.filename[0] != 0) {
@@ -611,13 +614,15 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
         fprintf(stderr, "XDP: error loading program: %s\n", errmsg);
         return err;
     }
+    fprintf(stderr, "XDP: BPF program loaded.\n");
 
-    err = xdp_program__attach(prog, fact->ifindex, XDP_MODE_HW, 0);
+    err = xdp_program__attach(prog, fact->ifindex, XDP_MODE_SKB, 0);
     if (err) {
         libxdp_strerror(err, errmsg, sizeof(errmsg));
         fprintf(stderr, "XDP: Couldn't attach XDP program on iface '%s' : %s (%d)\n", fact->ifname, errmsg, err);
         return err;
     }
+    fprintf(stderr, "XDP: Program attached to %s.\n", fact->ifname);
 
     /* We also need to load the xsks_map */
     struct bpf_map *map = bpf_object__find_map_by_name(xdp_program__bpf_obj(prog), "xsks_map");
@@ -626,6 +631,7 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
         fprintf(stderr, "ERROR: no xsks map found: %s\n", strerror(fact->xsk_map_fd));
         exit(EXIT_FAILURE);
     }
+    fprintf(stderr, "XDP: Found xsks_map with file descriptor %i.\n", fact->xsk_map_fd);
 //    }
 
     /* Allow unlimited locking of memory, so all memory needed for packet
@@ -658,6 +664,7 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
         exit(EXIT_FAILURE);
     }
 
+    fprintf(stderr, "XDP: Initialization success!\n");
     return DDS_RETCODE_OK;
 }
 

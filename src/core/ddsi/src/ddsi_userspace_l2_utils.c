@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include "ddsi__userspace_l2_utils.h"
 #include <dds/ddsi/ddsi_protocol.h>
+#include <malloc.h>
+#include <dds/ddsrt/heap.h>
+#include <dds/ddsrt/static_assert.h>
 #include "ddsi__tran.h"
 
 // Addressing utilities
@@ -135,4 +138,34 @@ int ddsi_userspace_l2_leave_mc(struct ddsi_tran_conn *conn, const ddsi_locator_t
 //        (void)srcloc;
 //        return joinleave_asm_mcgroup(uc->m_sock, 0, mcloc, interf);
     }
+}
+
+int ddsi_userspace_create_fake_interface(ddsrt_ifaddrs_t **interfaces, userspace_l2_mac_addr *mac_addr) {
+    ddsrt_ifaddrs_t *interface = ddsrt_malloc(1 * sizeof(ddsrt_ifaddrs_t));
+
+    interface->next = NULL;
+    interface->name = strdup("USERSPACE-VNET-0");
+    interface->index = 0;
+    interface->flags = IFF_BROADCAST | IFF_MULTICAST | IFF_UP | IFF_NOARP | IFF_PROMISC;
+    interface->type = DDSRT_IFTYPE_WIRED;
+
+    // TODO: Check whether we need an address family
+    interface->addr = ddsrt_malloc(sizeof(struct sockaddr));
+    interface->addr->sa_family = AF_UNSPEC;
+    DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(interface->addr->sa_data, 8, mac_addr);
+
+    // Netmask: FF:FF ... 00:00:00:00:00
+    interface->netmask = ddsrt_malloc(sizeof(struct sockaddr));
+    interface->netmask->sa_family = AF_UNSPEC;
+    memset(interface->netmask->sa_data, 0xFF, 8);
+    memset(interface->netmask->sa_data + 8, 0, 6);
+
+    // Broadcast address: 00:00 ... FF:FF:FF:FF:FF:FF
+    interface->broadaddr = ddsrt_malloc(sizeof(struct sockaddr));
+    interface->broadaddr->sa_family = AF_UNSPEC;
+    memset(interface->broadaddr->sa_data, 0, 8);
+    memset(interface->broadaddr->sa_data + 8, 0xFF, 6);
+
+    *interfaces = interface;
+    return DDS_RETCODE_OK;
 }

@@ -11,6 +11,10 @@
 #include <dds/ddsi/ddsi_tran.h>
 #include <string.h>
 
+typedef struct {
+    unsigned char bytes[6];
+} userspace_l2_mac_addr;
+
 // Convert a locator to its string representation
 char *ddsi_userspace_l2_locator_to_string (char *dst, size_t sizeof_dst, const ddsi_locator_t *loc, struct ddsi_tran_conn * conn, int with_port);
 
@@ -113,5 +117,6 @@ static inline void ddsi_userspace_copy_mac_address_and_zero__(void* dest, size_t
     ddsi_userspace_copy_mac_address_and_zero__(destArray, offset, macAddr); \
 }
 
+int ddsi_userspace_create_fake_interface(ddsrt_ifaddrs_t **interfaces, userspace_l2_mac_addr *mac_addr);
 
 #endif //CYCLONEDDS_DDSI_USERSPACE_L2_UTILS_H
