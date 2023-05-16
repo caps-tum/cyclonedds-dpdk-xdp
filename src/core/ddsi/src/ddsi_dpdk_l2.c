@@ -21,6 +21,7 @@
 #include "ddsi__mcgroup.h"
 #include "ddsi__pcap.h"
 #include "dds/ddsrt/static_assert.h"
+#include "ddsi__userspace_l2_utils.h"
 
 #if defined(__linux) && !LWIP_SOCKET
 #include <linux/if_packet.h>
@@ -77,27 +78,6 @@ typedef struct ddsi_dpdk_l2_conn {
     // VB: Do we need a socket?
     uint16_t m_dpdk_queue_identifier;
 } *ddsi_dpdk_l2_conn_t;
-
-static char *ddsi_dpdk_l2_to_string (char *dst, size_t sizeof_dst, const ddsi_locator_t *loc, struct ddsi_tran_conn * conn, int with_port)
-{
-    (void) conn;
-    if (with_port)
-        (void) snprintf(dst, sizeof_dst, "[%02x:%02x:%02x:%02x:%02x:%02x]:%u",
-                        loc->address[10], loc->address[11], loc->address[12],
-                        loc->address[13], loc->address[14], loc->address[15], loc->port);
-    else
-        (void) snprintf(dst, sizeof_dst, "[%02x:%02x:%02x:%02x:%02x:%02x]",
-                        loc->address[10], loc->address[11], loc->address[12],
-                        loc->address[13], loc->address[14], loc->address[15]);
-    return dst;
-}
-
-static void copy_mac_address_and_zero(void* dest, size_t offset, struct rte_ether_addr *addr) {
-    // Zeros all bytes from dest to dest + offset (exclusive), copies the MAC address to dest + offset.
-    // User is responsible for ensuring that there is sufficient space.
-    memset(dest, 0, offset);
-    memcpy(dest + offset, addr->addr_bytes, sizeof(struct rte_ether_addr));
-}
 
 
 static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned char * buf, size_t len, bool allow_spurious, ddsi_locator_t *srcloc) {
@@ -156,13 +136,8 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
         if (srcloc)
         {
             srcloc->kind = DDSI_LOCATOR_KIND_DPDK_L2;
-//            srcloc->port = ntohs (src.sll_protocol);
-            DDSRT_STATIC_ASSERT(
-                    sizeof(srcloc->address) == sizeof(packet->header.s_addr) + 10
-            );
-            copy_mac_address_and_zero(srcloc->address, 10, &packet->header.s_addr);
-            assert(packet->header.ether_type >= DPDK_L2_ETHER_TYPE);
-            srcloc->port = packet->header.ether_type - DPDK_L2_ETHER_TYPE;
+            srcloc->port = ddsi_userspace_l2_get_port_for_ethertype(packet->header.ether_type);
+            DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(srcloc->address, 10, &packet->header.s_addr);
         }
 
 //        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
@@ -180,20 +155,6 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
 //    } while (rc == DDS_RETCODE_INTERRUPTED);
 
     return bytes_received;
-}
-
-unsigned char bcast_locator[] = {
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00,
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-};
-
-static bool dpdk_l2_is_broadcast_locator(const ddsi_locator_t *locator) {
-    assert(locator->kind == DDSI_LOCATOR_KIND_DPDK_L2);
-    DDSRT_STATIC_ASSERT(sizeof(bcast_locator) == sizeof(locator->address));
-
-    return memcmp(locator->address, bcast_locator, sizeof(locator->address)) == 0;
 }
 
 static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_locator_t *dst, size_t niov, const ddsrt_iovec_t *iov, uint32_t flags)
@@ -227,10 +188,7 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
     assert(flags == 0);
     size_t bytes_transferred = 0;
 
-    size_t total_iov_size = 0;
-    for(size_t i = 0; i < niov; i++) {
-        total_iov_size += iov[i].iov_len;
-    }
+    size_t total_iov_size = ddsi_userspace_get_total_iov_size(niov, iov);
 
     struct rte_mbuf *buf = rte_pktmbuf_alloc(factory->m_dpdk_memory_pool_tx);
     assert(total_iov_size < UINT16_MAX - sizeof(struct dpdk_l2_packet));
@@ -306,7 +264,7 @@ static int ddsi_dpdk_l2_conn_locator (struct ddsi_tran_factory * fact, struct dd
     // VB: The MAC address is in the last 6 bytes, the rest is zeroes.
     DDSRT_STATIC_ASSERT(sizeof(loc->address) == sizeof(struct rte_ether_addr) + 10);
     struct rte_ether_addr addr = get_dpdk_interface_mac_address(((dpdk_transport_factory_t)fact)->dpdk_port_identifier);
-    copy_mac_address_and_zero(loc->address, 10, &addr);
+    DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(loc->address, 10, &addr);
     return 0;
 }
 
@@ -380,64 +338,6 @@ static dds_return_t ddsi_dpdk_l2_create_conn (struct ddsi_tran_conn **conn_out, 
     return DDS_RETCODE_OK;
 }
 
-static int isbroadcast(const ddsi_locator_t *loc)
-{
-    // VB: This should be OK as is.
-    int i;
-    for(i = 0; i < 6; i++)
-        if (loc->address[10 + i] != 0xff)
-            return 0;
-    return 1;
-}
-
-//static int joinleave_asm_mcgroup (ddsrt_socket_t socket, int join, const ddsi_locator_t *mcloc, const struct ddsi_network_interface *interf)
-//{
-//    int rc;
-//    struct packet_mreq mreq;
-//    mreq.mr_ifindex = (int)interf->if_index;
-//    mreq.mr_type = PACKET_MR_MULTICAST;
-//    mreq.mr_alen = 6;
-//    memcpy(mreq.mr_address, mcloc + 10, 6);
-//    rc = ddsrt_setsockopt(socket, SOL_PACKET, join ? PACKET_ADD_MEMBERSHIP : PACKET_DROP_MEMBERSHIP, &mreq, sizeof(mreq));
-//    return (rc == DDS_RETCODE_OK) ? 0 : rc;
-//}
-
-static int ddsi_dpdk_l2_join_mc (struct ddsi_tran_conn * conn, const ddsi_locator_t *srcloc, const ddsi_locator_t *mcloc, const struct ddsi_network_interface *interf)
-{
-    if (isbroadcast(mcloc))
-        return 0;
-    else
-    {
-        // VB: Multicast groups unsupported for now
-        (void)conn;
-        (void)srcloc;
-        (void)interf;
-        assert(false);
-        return DDS_RETCODE_UNSUPPORTED;
-//        ddsi_raweth_conn_t uc = (ddsi_raweth_conn_t) conn;
-//        (void)srcloc;
-//        return joinleave_asm_mcgroup(uc->m_sock, 1, mcloc, interf);
-    }
-}
-
-static int ddsi_dpdk_l2_leave_mc (struct ddsi_tran_conn * conn, const ddsi_locator_t *srcloc, const ddsi_locator_t *mcloc, const struct ddsi_network_interface *interf)
-{
-    if (isbroadcast(mcloc))
-        return 0;
-    else
-    {
-        // VB: Multicast groups unsupported for now
-        (void)conn;
-        (void)srcloc;
-        (void)interf;
-        assert(false);
-        return DDS_RETCODE_UNSUPPORTED;
-//        ddsi_raweth_conn_t uc = (ddsi_raweth_conn_t) conn;
-//        (void)srcloc;
-//        return joinleave_asm_mcgroup(uc->m_sock, 0, mcloc, interf);
-    }
-}
-
 static void ddsi_dpdk_l2_release_conn (struct ddsi_tran_conn * conn)
 {
     ddsi_dpdk_l2_conn_t uc = (ddsi_dpdk_l2_conn_t) conn;
@@ -449,66 +349,10 @@ static void ddsi_dpdk_l2_release_conn (struct ddsi_tran_conn * conn)
     ddsrt_free (conn);
 }
 
-static int ddsi_dpdk_l2_is_loopbackaddr (const struct ddsi_tran_factory *tran, const ddsi_locator_t *loc)
-{
-    (void) tran;
-    (void) loc;
-    return 0;
-}
-
-static int ddsi_dpdk_l2_is_mcaddr (const struct ddsi_tran_factory *tran, const ddsi_locator_t *loc)
-{
-    (void) tran;
-    assert (loc->kind == DDSI_LOCATOR_KIND_DPDK_L2);
-    return (loc->address[10] & 1);
-}
-
-static int ddsi_dpdk_l2_is_ssm_mcaddr (const struct ddsi_tran_factory *tran, const ddsi_locator_t *loc)
-{
-    (void) tran;
-    (void) loc;
-    return 0;
-}
-
-static enum ddsi_nearby_address_result ddsi_dpdk_l2_is_nearby_address (const ddsi_locator_t *loc, size_t ninterf, const struct ddsi_network_interface interf[], size_t *interf_idx)
-{
-    (void) ninterf;
-    // VB: This looks up only the address of the first interface.
-    // TODO: OK? Depends on if ddsi_network_interface is reliable
-    if (interf_idx)
-        *interf_idx = 0;
-    if (memcmp (interf[0].loc.address, loc->address, sizeof (loc->address)) == 0)
-        return DNAR_SELF;
-    else
-        return DNAR_LOCAL;
-}
 
 static enum ddsi_locator_from_string_result ddsi_dpdk_l2_address_from_string (const struct ddsi_tran_factory *tran, ddsi_locator_t *loc, const char *str)
 {
-    // VB: MAC Address parsing should be ok. Check if we want to set port to something
-    int i = 0;
-    (void)tran;
-    loc->kind = DDSI_LOCATOR_KIND_DPDK_L2;
-    loc->port = DDSI_LOCATOR_PORT_INVALID;
-    memset (loc->address, 0, sizeof (loc->address));
-    while (i < 6 && *str != 0)
-    {
-        unsigned o;
-        int p;
-        if (sscanf (str, "%x%n", &o, &p) != 1 || o > 255)
-            return AFSR_INVALID;
-        loc->address[10 + i++] = (unsigned char) o;
-        str += p;
-        if (i < 6)
-        {
-            if (*str != ':')
-                return AFSR_INVALID;
-            str++;
-        }
-    }
-    if (*str)
-        return AFSR_INVALID;
-    return AFSR_OK;
+    return ddsi_userspace_l2_address_from_string(tran, loc, str, DDSI_LOCATOR_KIND_DPDK_L2);
 }
 
 static void ddsi_dpdk_l2_deinit(struct ddsi_tran_factory * fact)
@@ -537,10 +381,9 @@ static int ddsi_dpdk_l2_enumerate_interfaces (struct ddsi_tran_factory * fact, e
     // TODO: Check whether we need an address family
     interface->addr = ddsrt_malloc(sizeof(struct sockaddr));
     interface->addr->sa_family = AF_UNSPEC;
-    DDSRT_STATIC_ASSERT(sizeof(interface->addr->sa_data) == 14);
     // TODO: We assume interface zero
     struct rte_ether_addr addr = get_dpdk_interface_mac_address(0);
-    copy_mac_address_and_zero(interface->addr->sa_data, 8, &addr);
+    DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(interface->addr->sa_data, 8, &addr);
 
     // Netmask: FF:FF ... 00:00:00:00:00
     interface->netmask = ddsrt_malloc(sizeof(struct sockaddr));
@@ -556,21 +399,6 @@ static int ddsi_dpdk_l2_enumerate_interfaces (struct ddsi_tran_factory * fact, e
 
     *interfaces = interface;
     return DDS_RETCODE_OK;
-}
-
-static int ddsi_dpdk_l2_is_valid_port (const struct ddsi_tran_factory *fact, uint32_t port)
-{
-    // We use a base ethernet type DPDK_L2_ETHER_TYPE and add the port number to it.
-    // The total must fit into the 16 bit ether_type field.
-    (void) fact;
-//    return (port >= 1 && port <= 65535);
-    return port < UINT16_MAX && (uint16_t)port + DPDK_L2_ETHER_TYPE < UINT16_MAX;
-}
-
-static uint32_t ddsi_dpdk_l2_receive_buffer_size (const struct ddsi_tran_factory *fact)
-{
-    (void) fact;
-    return 0;
 }
 
 static int ddsi_dpdk_l2_locator_from_sockaddr (const struct ddsi_tran_factory *tran, ddsi_locator_t *loc, const struct sockaddr *sockaddr)
@@ -679,17 +507,17 @@ int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv)
     fact->m_base.m_supports_fn = ddsi_dpdk_l2_supports;
     fact->m_base.m_create_conn_fn = ddsi_dpdk_l2_create_conn;
     fact->m_base.m_release_conn_fn = ddsi_dpdk_l2_release_conn;
-    fact->m_base.m_join_mc_fn = ddsi_dpdk_l2_join_mc;
-    fact->m_base.m_leave_mc_fn = ddsi_dpdk_l2_leave_mc;
-    fact->m_base.m_is_loopbackaddr_fn = ddsi_dpdk_l2_is_loopbackaddr;
-    fact->m_base.m_is_mcaddr_fn = ddsi_dpdk_l2_is_mcaddr;
-    fact->m_base.m_is_ssm_mcaddr_fn = ddsi_dpdk_l2_is_ssm_mcaddr;
-    fact->m_base.m_is_nearby_address_fn = ddsi_dpdk_l2_is_nearby_address;
+    fact->m_base.m_join_mc_fn = ddsi_userspace_l2_join_mc;
+    fact->m_base.m_leave_mc_fn = ddsi_userspace_l2_leave_mc;
+    fact->m_base.m_is_loopbackaddr_fn = ddsi_userspace_l2_is_loopbackaddr;
+    fact->m_base.m_is_mcaddr_fn = ddsi_userspace_l2_is_mcaddr;
+    fact->m_base.m_is_ssm_mcaddr_fn = ddsi_userspace_l2_is_ssm_mcaddr;
+    fact->m_base.m_is_nearby_address_fn = ddsi_userspace_l2_is_nearby_address;
     fact->m_base.m_locator_from_string_fn = ddsi_dpdk_l2_address_from_string;
-    fact->m_base.m_locator_to_string_fn = ddsi_dpdk_l2_to_string;
+    fact->m_base.m_locator_to_string_fn = ddsi_userspace_l2_locator_to_string;
     fact->m_base.m_enumerate_interfaces_fn = ddsi_dpdk_l2_enumerate_interfaces;
-    fact->m_base.m_is_valid_port_fn = ddsi_dpdk_l2_is_valid_port;
-    fact->m_base.m_receive_buffer_size_fn = ddsi_dpdk_l2_receive_buffer_size;
+    fact->m_base.m_is_valid_port_fn = ddsi_userspace_l2_is_valid_port_fn;
+    fact->m_base.m_receive_buffer_size_fn = ddsi_userspace_l2_receive_buffer_size_fn;
     fact->m_base.m_locator_from_sockaddr_fn = ddsi_dpdk_l2_locator_from_sockaddr;
     ddsi_factory_add (gv, (struct ddsi_tran_factory *) fact);
     GVLOG (DDS_LC_CONFIG, "dpdk_l2 initialized\n");

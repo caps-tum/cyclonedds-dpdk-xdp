@@ -72,6 +72,7 @@
 #include "dds__whc.h"
 #include "dds/cdr/dds_cdrstream.h"
 #include "ddsi__dpdk_l2.h"
+#include "ddsi__xdp_l2.h"
 
 #ifdef DDS_HAS_SHM
 #include "dds/ddsi/ddsi_shm_transport.h"
@@ -873,7 +874,8 @@ static int setup_and_start_recv_threads (struct ddsi_domaingv *gv)
   gv->n_recv_threads = 1;
   gv->recv_threads[0].name = "recv";
   gv->recv_threads[0].arg.mode = DDSI_RTM_MANY;
-  if(strcmp(gv->m_factory->m_typename, DPDK_FACTORY_TYPE_NAME) == 0) {
+  if(strcmp(gv->m_factory->m_typename, DPDK_FACTORY_TYPE_NAME) == 0
+     || strcmp(gv->m_factory->m_typename, XDP_FACTORY_TYPE_NAME) == 0) {
       // TODO: VB This is definitely a hack.
       printf("RECV-THREADS: Using receive thread mode override.\n");
       gv->recv_threads[0].arg.mode = DDSI_RTM_SINGLE;
@@ -1184,6 +1186,15 @@ int ddsi_init (struct ddsi_domaingv *gv)
       if (ddsi_dpdk_l2_init (gv) < 0)
           goto err_udp_tcp_init;
       gv->m_factory = ddsi_factory_find (gv, DPDK_FACTORY_TYPE_NAME);
+      break;
+    case DDSI_TRANS_XDP_L2:
+      gv->config.publish_uc_locators = 1;
+      gv->config.enable_uc_locators = 0;
+      gv->config.participantIndex = DDSI_PARTICIPANT_INDEX_NONE;
+      gv->config.many_sockets_mode = DDSI_MSM_NO_UNICAST;
+      if (ddsi_xdp_l2_init (gv) < 0)
+          goto err_udp_tcp_init;
+      gv->m_factory = ddsi_factory_find (gv, XDP_FACTORY_TYPE_NAME);
       break;
     case DDSI_TRANS_NONE:
       gv->config.publish_uc_locators = 0;

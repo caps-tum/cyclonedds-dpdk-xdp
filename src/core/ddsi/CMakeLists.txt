@@ -17,6 +17,8 @@ set(srcs_ddsi
   ddsi_tran.c
   ddsi_udp.c
   ddsi_dpdk_l2.c
+  ddsi_xdp_l2.c
+  ddsi_userspace_l2_utils.c
   ddsi_raweth.c
   ddsi_vnet.c
   ddsi_ipaddr.c
@@ -186,6 +188,8 @@ set(hdrs_private_ddsi
   ddsi__typelib.h
   ddsi__udp.h
   ddsi__dpdk_l2.h
+  ddsi__xdp_l2.h
+  ddsi__userspace_l2_utils.h
   ddsi__vendor.h
   ddsi__vnet.h
   ddsi__wraddrset.h
@@ -299,6 +303,20 @@ pkg_check_modules(LIBDPDK REQUIRED IMPORTED_TARGET libdpdk)
 
 target_link_libraries(ddsc PRIVATE PkgConfig::LIBDPDK)
 target_compile_options(ddsc PRIVATE ${LIBDPDK_CFLAGS})
+
+pkg_check_modules(LIBXDP REQUIRED IMPORTED_TARGET libxdp)
+
+target_link_libraries(ddsc PRIVATE PkgConfig::LIBXDP)
+target_compile_options(ddsc PRIVATE ${LIBXDP_CFLAGS})
+
+add_custom_command(
+        OUTPUT ddsi_xdp_l2_kern.o
+        COMMAND clang -S -target bpf -D __BPF_TRACING__ -Wall -WExtra -O2 -emit-llvm -c -g -o ${CMAKE_BINARY_DIR}/ddsi_xdp_l2_kern.ll ${CMAKE_CURRENT_LIST_DIR}/src/ddsi_xdp_l2_kern.c
+        COMMAND llc -march=bpf -filetype=obj -o ${CMAKE_BINARY_DIR}/ddsi_xdp_l2_kern.o ${CMAKE_BINARY_DIR}/ddsi_xdp_l2_kern.ll
+        MAIN_DEPENDENCY ${CMAKE_CURRENT_LIST_DIR}/src/ddsi_xdp_l2_kern.c
+)
+add_custom_target(ddsi_xdp_l2_kern SOURCES ddsi_xdp_l2_kern.o)
+add_dependencies(ddsc ddsi_xdp_l2_kern)
 
 install(
   DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/include/"
