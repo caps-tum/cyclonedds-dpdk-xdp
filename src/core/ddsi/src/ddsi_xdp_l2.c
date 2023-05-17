@@ -31,6 +31,7 @@
 #include <xdp/libxdp.h>
 #include <linux/if_ether.h>
 #include <sys/resource.h>
+#include <rte_hash_crc.h>
 
 #define NUM_FRAMES         4096
 #define XDP_L2_FRAME_SIZE XSK_UMEM__DEFAULT_FRAME_SIZE
@@ -90,13 +91,14 @@ typedef struct xdp_transport_factory {
     // This needs to be first field so that it can be cast as necessary
     struct ddsi_tran_factory m_base;
 
-    struct xsk_socket_info xskSocketInfo;
+    struct xsk_socket_info *xskSocketInfo;
     char *ifname;
     int ifindex;
     int xsk_if_queue;
     __u32 xdp_flags;
     __u16 xsk_bind_flags;
     int xsk_map_fd;
+    userspace_l2_mac_addr mac_addr;
 } *xdp_transport_factory_t;
 
 //typedef struct ddsi_raweth_conn {
@@ -246,11 +248,10 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
     (void) allow_spurious;
     assert(allow_spurious > 0);
 
-    struct xsk_socket_info *xsk = &((xdp_transport_factory_t)conn->m_factory)->xskSocketInfo;
-    unsigned int packetsReceived, stock_frames, i;
+    struct xsk_socket_info *xsk = ((xdp_transport_factory_t)conn->m_factory)->xskSocketInfo;
+    unsigned int packetsReceived, i;
     uint32_t idx_rx = 0, idx_fq = 0;
     int ret;
-    int bytes_received = -1;
 
 
     for(uint8_t tries = 0; tries < 200; tries++) {
@@ -260,16 +261,25 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
         }
     }
 
+    if(packetsReceived == 0) {
+        return DDS_RETCODE_TRY_AGAIN;
+    }
+
     /* Stuff the ring with as many frames as possible */
-    stock_frames = xsk_prod_nb_free(&xsk->umem->rxFillRing, xsk_umem_free_frames(xsk));
+    unsigned int stock_frames = xsk_prod_nb_free(&xsk->umem->rxFillRing, xsk_umem_free_frames(xsk));
+    // Actually, lets just use the number of frames we took out.
+    if(packetsReceived < stock_frames) {
+        stock_frames = packetsReceived;
+    }
 
     if (stock_frames > 0) {
 
         ret = xsk_ring_prod__reserve(&xsk->umem->rxFillRing, stock_frames, &idx_fq);
 
         /* This should not happen, but just in case */
-        while (ret != stock_frames)
+        while (ret != stock_frames) {
             ret = xsk_ring_prod__reserve(&xsk->umem->rxFillRing, packetsReceived, &idx_fq);
+        }
 
         for (i = 0; i < stock_frames; i++) {
             *xsk_ring_prod__fill_addr(&xsk->umem->rxFillRing, idx_fq++) = xsk_alloc_umem_frame(xsk);
@@ -279,7 +289,9 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
     }
 
     /* Process received packets */
-    for (i = 0; i < packetsReceived; i++) {
+    unsigned int packetsProcessed;
+    size_t bytes_received = 0;
+    for (packetsProcessed = 0; packetsProcessed < packetsReceived; packetsProcessed++) {
         const struct xdp_desc *rxDescriptor = xsk_ring_cons__rx_desc(&xsk->rxCompletionRing, idx_rx);
         
         if(bytes_received + rxDescriptor->len >= len) {
@@ -290,9 +302,13 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
         struct xdp_l2_packet *packet = (struct xdp_l2_packet *) xsk_umem__get_data(xsk->umem->buffer, rxDescriptor->addr);
 
         if(ddsi_userspace_l2_is_valid_ethertype(packet->header.h_proto)) {
-            assert(ddsi_userspace_l2_get_port_for_ethertype(packet->header.h_proto) == srcloc->port);
+            if(srcloc) {
+                srcloc->kind = DDSI_LOCATOR_KIND_XDP_L2;
+                srcloc->port = ddsi_userspace_l2_get_port_for_ethertype(packet->header.h_proto);
+                DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(srcloc->address, 10, &packet->header.h_source);
+            }
             size_t data_len = DDSI_USERSPACE_GET_PAYLOAD_SIZE(rxDescriptor->len, struct xdp_l2_packet);
-            memcpy(buf, packet->payload, data_len);
+            memcpy(buf + bytes_received, packet->payload, data_len);
             bytes_received += data_len;
         }
 
@@ -300,14 +316,16 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
         idx_rx++;
     }
 
-    // This signals that we finished processing packetsReceived packets from the rxCompletionRing,
-    // freeing up the descriptor slots
-    xsk_ring_cons__release(&xsk->rxCompletionRing, packetsReceived);
+    // This signals that we finished processing packetsProcessed (not necessarily == packetsReceived) packets from the
+    // rxCompletionRing, freeing up the descriptor slots
+    xsk_ring_cons__release(&xsk->rxCompletionRing, packetsProcessed);
 
-    /* Do we need to wake up the kernel for transmission */
-    // TODO
-
-//    } while (rc == DDS_RETCODE_INTERRUPTED);
+    printf("XDP: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free).\n",
+           srcloc->port, bytes_received,
+           buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
+           rte_hash_crc(buf, bytes_received, 1337),
+           xsk_umem_free_frames(xsk)
+    );
 
     return bytes_received;
 }
@@ -318,16 +336,15 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
     xdp_transport_factory_t factory = (xdp_transport_factory_t) uc->m_base.m_factory;
 
     assert(flags == 0);
-    size_t bytes_transferred = 0;
 
-    struct xsk_socket_info *xsk = &factory->xskSocketInfo;
+    struct xsk_socket_info *xsk = factory->xskSocketInfo;
 
     /* Here we sent the packet out of the receive port. Note that
  * we allocate one entry and schedule it. Your design would be
  * faster if you do batch processing/transmission */
 
     uint64_t frame = xsk_alloc_umem_frame(xsk);
-    if(frame == 0) {
+    if(frame == INVALID_UMEM_FRAME) {
         assert(0);
         return DDS_RETCODE_OUT_OF_RESOURCES;
     }
@@ -336,6 +353,7 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
     uint32_t ret = xsk_ring_prod__reserve(&xsk->txFillRing, 1, &tx_idx);
     if (ret != 1) {
         /* No more transmit slots, drop the packet */
+        xsk_free_umem_frame(xsk, frame);
         return DDS_RETCODE_TRY_AGAIN;
     }
 
@@ -346,11 +364,13 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
     frame_buffer->header.h_proto = ddsi_userspace_l2_get_ethertype_for_port((uint16_t) dst->port);
     DDSRT_STATIC_ASSERT(sizeof(dst->address) == 16 && sizeof(frame_buffer->header.h_dest) == 6);
     memcpy(frame_buffer->header.h_dest, &dst->address[10], sizeof(frame_buffer->header.h_dest));
-    // TODO: Source mac addr?
+    DDSRT_STATIC_ASSERT(sizeof(frame_buffer->header.h_source) == sizeof(factory->mac_addr));
+    memcpy(frame_buffer->header.h_source, &factory->mac_addr, sizeof(frame_buffer->header.h_source));
 
     // Fill the data
     size_t data_copied = ddsi_userspace_copy_iov_to_packet(niov, iov, &frame_buffer->payload, XDP_L2_FRAME_DATA_SIZE);
     if(data_copied == 0) {
+        xsk_free_umem_frame(xsk, frame);
         return DDS_RETCODE_OUT_OF_RESOURCES;
     }
 
@@ -360,7 +380,20 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
     txDescriptor->len = DDSI_USERSPACE_GET_PACKET_SIZE(data_copied, struct xdp_l2_packet);
     xsk_ring_prod__submit(&xsk->txFillRing, 1);
 
-    sendto(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
+    // We don't actually send anything here. This is just to notify the kernel. Therefore, should have 0 bytes
+    // transferred.
+    if(sendto(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0) != 0) {
+        printf("XDP: Sendto call failed.\n");
+        abort();
+    }
+
+    printf("XDP: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free).\n",
+           dst->port, niov, data_copied,
+           frame_buffer->payload[0], frame_buffer->payload[1], frame_buffer->payload[2],
+           frame_buffer->payload[data_copied-3], frame_buffer->payload[data_copied-2], frame_buffer->payload[data_copied-1],
+           rte_hash_crc(frame_buffer->payload, data_copied, 1337),
+           xsk_umem_free_frames(xsk)
+    );
 
     /* Collect/free completed TX buffers */
     uint32_t indexTXCompletionRing;
@@ -377,7 +410,7 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
         xsk_ring_cons__release(&xsk->umem->txCompletionRing, completed);
     }
 
-    return bytes_transferred;
+    return (ssize_t) data_copied;
 }
 
 static ddsrt_socket_t ddsi_dpdk_l2_conn_handle (struct ddsi_tran_base * base)
@@ -414,8 +447,7 @@ static int ddsi_xdp_l2_conn_locator (struct ddsi_tran_factory * fact, struct dds
 
 
     // VB: The MAC address is in the last 6 bytes, the rest is zeroes.
-    userspace_l2_mac_addr addr = get_xdp_interface_mac_address(((xdp_transport_factory_t)fact)->ifname);
-    DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(loc->address, 10, &addr);
+    DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(loc->address, 10, &((xdp_transport_factory_t)fact)->mac_addr);
     return 0;
 }
 
@@ -479,27 +511,16 @@ static enum ddsi_locator_from_string_result ddsi_xdp_l2_address_from_string (con
     return ddsi_userspace_l2_address_from_string(tran, loc, str, DDSI_LOCATOR_KIND_XDP_L2);
 }
 
-static void ddsi_xdp_l2_deinit(struct ddsi_tran_factory * fact)
-{
-    xdp_transport_factory_t factory = (xdp_transport_factory_t) fact;
-    DDS_CLOG (DDS_LC_CONFIG, &fact->gv->logconfig, "dpdk l2 de-initialized\n");
-
-    /* Cleanup */
-    xsk_socket__delete(factory->xskSocketInfo.xsk);
-    if(factory->xskSocketInfo.umem != NULL) {
-        xsk_umem__delete(factory->xskSocketInfo.umem->umem);
-    }
-
-    // VB: Remove XDP program
+static void remove_xdp_programs(int ifindex, const char* ifname) {// VB: Remove XDP program
     struct xdp_multiprog *mp = NULL;
     DECLARE_LIBBPF_OPTS(bpf_object_open_opts, opts);
 
-    mp = xdp_multiprog__get_from_ifindex(factory->ifindex);
+    mp = xdp_multiprog__get_from_ifindex(ifindex);
     if (libxdp_get_error(mp)) {
         fprintf(stderr, "XDP: Unable to get xdp_dispatcher program: %s\n", strerror(errno));
         goto out;
     } else if (!mp) {
-        fprintf(stderr, "XDP: No XDP program loaded on %s\n", factory->ifname);
+        fprintf(stderr, "XDP: No XDP program loaded on %s\n", ifname);
         mp = NULL;
         goto out;
     }
@@ -513,6 +534,19 @@ static void ddsi_xdp_l2_deinit(struct ddsi_tran_factory * fact)
 
     out:
     xdp_multiprog__close(mp);
+}
+
+static void ddsi_xdp_l2_deinit(struct ddsi_tran_factory * fact)
+{
+    xdp_transport_factory_t factory = (xdp_transport_factory_t) fact;
+    DDS_CLOG (DDS_LC_CONFIG, &fact->gv->logconfig, "dpdk l2 de-initialized\n");
+
+    /* Cleanup */
+    xsk_socket__delete(factory->xskSocketInfo->xsk);
+    if(factory->xskSocketInfo->umem != NULL) {
+        xsk_umem__delete(factory->xskSocketInfo->umem->umem);
+    }
+    remove_xdp_programs(factory->ifindex, factory->ifname);
 
     ddsrt_free (fact);
 }
@@ -580,13 +614,14 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
     DECLARE_LIBBPF_OPTS(bpf_object_open_opts, opts);
 //    DECLARE_LIBXDP_OPTS(xdp_program_opts, xdp_opts, 0);
     struct rlimit rlim = {RLIM_INFINITY, RLIM_INFINITY};
-    struct xsk_umem_info *umem;
-    struct xsk_socket_info *xsk_socket;
     int err;
     char errmsg[1024];
 
     fact->ifname = strdup("eno2");
     fact->ifindex = if_nametoindex(fact->ifname);
+    fact->xsk_if_queue = 0;
+
+    fact->mac_addr = get_xdp_interface_mac_address(((xdp_transport_factory_t)fact)->ifname);
 
 
 //    /* Load custom program if configured */
@@ -615,6 +650,9 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
         return err;
     }
     fprintf(stderr, "XDP: BPF program loaded.\n");
+
+    // Remove existing programs if we crashed last time
+    remove_xdp_programs(fact->ifindex, fact->ifname);
 
     err = xdp_program__attach(prog, fact->ifindex, XDP_MODE_SKB, 0);
     if (err) {
@@ -651,15 +689,15 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
     }
 
     /* Initialize shared packet_buffer for umem usage */
-    umem = configure_xsk_umem(packet_buffer, packet_buffer_size);
+    struct xsk_umem_info *umem = configure_xsk_umem(packet_buffer, packet_buffer_size);
     if (umem == NULL) {
         fprintf(stderr, "ERROR: Can't create umem \"%s\"\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
 
     /* Open and configure the AF_XDP (xsk) socket */
-    xsk_socket = xsk_configure_socket(fact, umem);
-    if (xsk_socket == NULL) {
+    fact->xskSocketInfo = xsk_configure_socket(fact, umem);
+    if (fact->xskSocketInfo == NULL) {
         fprintf(stderr, "ERROR: Can't setup AF_XDP socket \"%s\"\n", strerror(errno));
         exit(EXIT_FAILURE);
     }

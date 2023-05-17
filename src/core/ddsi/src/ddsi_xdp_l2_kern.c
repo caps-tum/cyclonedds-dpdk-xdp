@@ -23,7 +23,8 @@ struct {
 SEC("xdp")
 int xdp_sock_prog(struct xdp_md *ctx)
 {
-    int index = ctx->rx_queue_index;
+//    int index = ctx->rx_queue_index;
+    int index = 0;
 
     if(ctx->data + sizeof(struct ethhdr) >= ctx->data_end) {
         return XDP_PASS;
@@ -31,7 +32,7 @@ int xdp_sock_prog(struct xdp_md *ctx)
 
     struct ethhdr* header = (struct ethhdr*) ctx->data;
 
-    if(ddsi_userspace_l2_is_valid_port(header->h_proto)) {
+    if(ddsi_userspace_l2_is_valid_ethertype(header->h_proto)) {
         /* A set entry here means that the correspnding queue_id
          * has an active AF_XDP socket bound to it. */
         if (bpf_map_lookup_elem(&xsks_map, &index)) {

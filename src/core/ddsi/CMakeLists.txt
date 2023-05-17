@@ -311,7 +311,7 @@ target_compile_options(ddsc PRIVATE ${LIBXDP_CFLAGS})
 
 add_custom_command(
         OUTPUT ddsi_xdp_l2_kern.o
-        COMMAND clang -S -target bpf -D __BPF_TRACING__ -Wall -WExtra -O2 -emit-llvm -c -g -o ${CMAKE_BINARY_DIR}/ddsi_xdp_l2_kern.ll ${CMAKE_CURRENT_LIST_DIR}/src/ddsi_xdp_l2_kern.c
+        COMMAND clang -S -target bpf -D __BPF_TRACING__ -Wall -Wextra -O2 -emit-llvm -c -g -o ${CMAKE_BINARY_DIR}/ddsi_xdp_l2_kern.ll ${CMAKE_CURRENT_LIST_DIR}/src/ddsi_xdp_l2_kern.c
         COMMAND llc -march=bpf -filetype=obj -o ${CMAKE_BINARY_DIR}/ddsi_xdp_l2_kern.o ${CMAKE_BINARY_DIR}/ddsi_xdp_l2_kern.ll
         MAIN_DEPENDENCY ${CMAKE_CURRENT_LIST_DIR}/src/ddsi_xdp_l2_kern.c
 )
