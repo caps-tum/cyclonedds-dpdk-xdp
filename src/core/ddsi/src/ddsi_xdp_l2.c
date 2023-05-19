@@ -400,10 +400,7 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
     // We don't actually send anything here. This is just to notify the kernel.
     // Therefore, should have 0 bytes transferred.
     if (xsk_ring_prod__needs_wakeup(&xsk->txFillRing)) {
-        if (sendto(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0) != 0) {
-            printf("XDP: Sendto call failed.\n");
-            abort();
-        }
+        sendto(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
     }
 
 //    printf("XDP: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free, %i pending).\n",
@@ -682,7 +679,7 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
     // Remove existing programs if we crashed last time
     remove_xdp_programs(fact->ifindex, fact->ifname);
 
-    err = xdp_program__attach(prog, fact->ifindex, XDP_MODE_SKB, 0);
+    err = xdp_program__attach(prog, fact->ifindex, XDP_MODE_NATIVE, 0);
     if (err) {
         libxdp_strerror(err, errmsg, sizeof(errmsg));
         fprintf(stderr, "XDP: Couldn't attach XDP program on iface '%s' : %s (%d)\n", fact->ifname, errmsg, err);
