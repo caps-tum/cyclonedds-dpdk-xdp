@@ -72,6 +72,11 @@ struct xsk_umem_info {
     void *buffer;
 };
 
+typedef struct {
+    uint64_t umem_frame_addr[NUM_FRAMES / 2];
+    uint32_t umem_frame_free;
+} umem_free_frame_stack;
+
 struct xsk_socket_info {
     // Documentation on rings: https://www.kernel.org/doc/html/latest/networking/af_xdp.html
     // The UMEM uses two rings: FILL and COMPLETION. Each socket associated with the UMEM must have an RX queue, TX
@@ -82,9 +87,8 @@ struct xsk_socket_info {
 	struct xsk_umem_info *umem;
 	struct xsk_socket *xsk;
 
-	uint64_t umem_frame_addr[NUM_FRAMES];
-	uint32_t umem_frame_free;
-
+	umem_free_frame_stack umem_frames_tx;
+	umem_free_frame_stack umem_frames_rx;
 };
 
 typedef struct xdp_transport_factory {
@@ -144,27 +148,38 @@ static struct xsk_umem_info *configure_xsk_umem(void *buffer, uint64_t size)
     return umem;
 }
 
-static uint64_t xsk_alloc_umem_frame(struct xsk_socket_info *xsk)
+static uint64_t xsk_alloc_umem_frame(struct xsk_socket_info *xsk, bool is_tx)
 {
+    umem_free_frame_stack *freeFrameStack = is_tx ? &xsk->umem_frames_tx : &xsk->umem_frames_rx;
     uint64_t frame;
-    if (xsk->umem_frame_free == 0)
+    if (freeFrameStack->umem_frame_free == 0) {
+        fprintf(stderr, "XDP UMEM: 1 %s frame allocation FAILED.\n", is_tx?"TX":"RX");
         return INVALID_UMEM_FRAME;
+    }
 
-    frame = xsk->umem_frame_addr[--xsk->umem_frame_free];
-    xsk->umem_frame_addr[xsk->umem_frame_free] = INVALID_UMEM_FRAME;
+    freeFrameStack->umem_frame_free--;
+    frame = freeFrameStack->umem_frame_addr[freeFrameStack->umem_frame_free];
+    freeFrameStack->umem_frame_addr[freeFrameStack->umem_frame_free] = INVALID_UMEM_FRAME;
+    fprintf(stderr, "XDP UMEM: 1 %s frame allocated: %lu.\n", is_tx?"TX":"RX", frame);
+    assert(frame >= 0 && frame < NUM_FRAMES * XDP_L2_FRAME_SIZE);
     return frame;
 }
 
-static void xsk_free_umem_frame(struct xsk_socket_info *xsk, uint64_t frame)
+static void xsk_free_umem_frame(struct xsk_socket_info *xsk, uint64_t frame, bool is_tx)
 {
-    assert(xsk->umem_frame_free < NUM_FRAMES);
+    umem_free_frame_stack *freeFrameStack = is_tx ? &xsk->umem_frames_tx : &xsk->umem_frames_rx;
+    assert(freeFrameStack->umem_frame_free < NUM_FRAMES);
 
-    xsk->umem_frame_addr[xsk->umem_frame_free++] = frame;
+    freeFrameStack->umem_frame_addr[freeFrameStack->umem_frame_free] = frame;
+    freeFrameStack->umem_frame_free++;
+    fprintf(stderr, "XDP UMEM: 1 %s frame freed: %lu.\n", is_tx?"TX":"RX", frame);
+    assert(frame >= 0 && frame < NUM_FRAMES * XDP_L2_FRAME_SIZE);
 }
 
-static uint64_t xsk_umem_free_frames(struct xsk_socket_info *xsk)
+static uint64_t xsk_umem_free_frames(struct xsk_socket_info *xsk, bool is_tx)
 {
-    return xsk->umem_frame_free;
+    umem_free_frame_stack *freeFrameStack = is_tx ? &xsk->umem_frames_tx : &xsk->umem_frames_rx;
+    return freeFrameStack->umem_frame_free;
 }
 
 static struct xsk_socket_info *xsk_configure_socket(xdp_transport_factory_t factory, struct xsk_umem_info *umem)
@@ -184,6 +199,7 @@ static struct xsk_socket_info *xsk_configure_socket(xdp_transport_factory_t fact
     xsk_cfg.bind_flags = factory->xsk_bind_flags;
 //    xsk_cfg.libbpf_flags = (custom_xsk) ? XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD: 0;
     xsk_cfg.libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
+//    xsk_cfg.libbpf_flags = 0;
     ret = xsk_socket__create(&xsk_info->xsk, factory->ifname,
                              factory->xsk_if_queue, umem->umem, &xsk_info->rxCompletionRing,
                              &xsk_info->txFillRing, &xsk_cfg);
@@ -203,10 +219,13 @@ static struct xsk_socket_info *xsk_configure_socket(xdp_transport_factory_t fact
 //    }
 
     /* Initialize umem frame allocation */
-    for (unsigned int i = 0; i < NUM_FRAMES; i++)
-        xsk_info->umem_frame_addr[i] = i * XDP_L2_FRAME_SIZE;
+    for (unsigned int i = 0; i < NUM_FRAMES / 2; i++) {
+        xsk_info->umem_frames_tx.umem_frame_addr[i] = i * XDP_L2_FRAME_SIZE;
+        xsk_info->umem_frames_rx.umem_frame_addr[i] = (i + NUM_FRAMES / 2) * XDP_L2_FRAME_SIZE;
+    }
 
-    xsk_info->umem_frame_free = NUM_FRAMES;
+    xsk_info->umem_frames_tx.umem_frame_free = NUM_FRAMES / 2;
+    xsk_info->umem_frames_rx.umem_frame_free = NUM_FRAMES / 2;
 
     /* Stuff the receive path with buffers, we assume we have enough */
     uint32_t rxFillRingIndex;
@@ -217,7 +236,7 @@ static struct xsk_socket_info *xsk_configure_socket(xdp_transport_factory_t fact
     }
 
     for (unsigned int i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS; i ++) {
-        *xsk_ring_prod__fill_addr(&xsk_info->umem->rxFillRing, rxFillRingIndex) = xsk_alloc_umem_frame(xsk_info);
+        *xsk_ring_prod__fill_addr(&xsk_info->umem->rxFillRing, rxFillRingIndex) = xsk_alloc_umem_frame(xsk_info, false);
         rxFillRingIndex++;
     }
     xsk_ring_prod__submit(&xsk_info->umem->rxFillRing, XSK_RING_PROD__DEFAULT_NUM_DESCS);
@@ -255,9 +274,12 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
 
 
     for(uint8_t tries = 0; tries < 200; tries++) {
-        packetsReceived = xsk_ring_cons__peek(&xsk->rxCompletionRing, RX_BATCH_SIZE, &idx_rx);
+        packetsReceived = xsk_ring_cons__peek(&xsk->rxCompletionRing, 1, &idx_rx);
         if (packetsReceived > 0) {
             break;
+        }
+        if(xsk_ring_prod__needs_wakeup(&xsk->umem->rxFillRing)) {
+            recvfrom(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL, NULL);
         }
     }
 
@@ -266,11 +288,7 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
     }
 
     /* Stuff the ring with as many frames as possible */
-    unsigned int stock_frames = xsk_prod_nb_free(&xsk->umem->rxFillRing, xsk_umem_free_frames(xsk));
-    // Actually, lets just use the number of frames we took out.
-    if(packetsReceived < stock_frames) {
-        stock_frames = packetsReceived;
-    }
+    unsigned int stock_frames = packetsReceived;
 
     if (stock_frames > 0) {
 
@@ -282,69 +300,64 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
         }
 
         for (i = 0; i < stock_frames; i++) {
-            *xsk_ring_prod__fill_addr(&xsk->umem->rxFillRing, idx_fq++) = xsk_alloc_umem_frame(xsk);
+            *xsk_ring_prod__fill_addr(&xsk->umem->rxFillRing, idx_fq++) = xsk_alloc_umem_frame(xsk, false);
         }
 
         xsk_ring_prod__submit(&xsk->umem->rxFillRing, stock_frames);
     }
 
     /* Process received packets */
-    unsigned int packetsProcessed;
-    size_t bytes_received = 0;
-    for (packetsProcessed = 0; packetsProcessed < packetsReceived; packetsProcessed++) {
-        const struct xdp_desc *rxDescriptor = xsk_ring_cons__rx_desc(&xsk->rxCompletionRing, idx_rx);
-        
-        if(bytes_received + rxDescriptor->len >= len) {
-            assert(bytes_received > 0);
-            break;
-        }
+    const struct xdp_desc *rxDescriptor = xsk_ring_cons__rx_desc(&xsk->rxCompletionRing, idx_rx);
 
-        struct xdp_l2_packet *packet = (struct xdp_l2_packet *) xsk_umem__get_data(xsk->umem->buffer, rxDescriptor->addr);
-
-        if(ddsi_userspace_l2_is_valid_ethertype(packet->header.h_proto)) {
-            if(srcloc) {
-                srcloc->kind = DDSI_LOCATOR_KIND_XDP_L2;
-                srcloc->port = ddsi_userspace_l2_get_port_for_ethertype(packet->header.h_proto);
-                DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(srcloc->address, 10, &packet->header.h_source);
-            }
-            size_t data_len = DDSI_USERSPACE_GET_PAYLOAD_SIZE(rxDescriptor->len, struct xdp_l2_packet);
-            memcpy(buf + bytes_received, packet->payload, data_len);
-            bytes_received += data_len;
-        }
-
-        xsk_free_umem_frame(xsk, rxDescriptor->addr);
-        idx_rx++;
+    if(rxDescriptor->len >= len) {
+        return DDS_RETCODE_OUT_OF_RESOURCES;
     }
+
+    struct xdp_l2_packet *packet = (struct xdp_l2_packet *) xsk_umem__get_data(xsk->umem->buffer, rxDescriptor->addr);
+
+    size_t bytes_received = 0;
+    if(ddsi_userspace_l2_is_valid_ethertype(packet->header.h_proto)) {
+        if(srcloc) {
+            srcloc->kind = DDSI_LOCATOR_KIND_XDP_L2;
+            srcloc->port = ddsi_userspace_l2_get_port_for_ethertype(packet->header.h_proto);
+            DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(srcloc->address, 10, &packet->header.h_source);
+        }
+        bytes_received = DDSI_USERSPACE_GET_PAYLOAD_SIZE(rxDescriptor->len, struct xdp_l2_packet);
+        memcpy(buf, packet->payload, bytes_received);
+    }
+
+    xsk_free_umem_frame(xsk, rxDescriptor->addr, false);
+    idx_rx++;
 
     // This signals that we finished processing packetsProcessed (not necessarily == packetsReceived) packets from the
     // rxCompletionRing, freeing up the descriptor slots
-    xsk_ring_cons__release(&xsk->rxCompletionRing, packetsProcessed);
+    xsk_ring_cons__release(&xsk->rxCompletionRing, 1);
 
     printf("XDP: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free).\n",
            srcloc->port, bytes_received,
            buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
            rte_hash_crc(buf, bytes_received, 1337),
-           xsk_umem_free_frames(xsk)
+           xsk_umem_free_frames(xsk, false)
     );
 
     return bytes_received;
 }
 
-static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_locator_t *dst, size_t niov, const ddsrt_iovec_t *iov, uint32_t flags)
-{
+static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_locator_t *dst, size_t niov, const ddsrt_iovec_t *iov, uint32_t flags) {
     ddsi_xdp_l2_conn_t uc = (ddsi_xdp_l2_conn_t) conn;
     xdp_transport_factory_t factory = (xdp_transport_factory_t) uc->m_base.m_factory;
 
     assert(flags == 0);
 
     struct xsk_socket_info *xsk = factory->xskSocketInfo;
+    static int pendingTransmits = 0;
 
     /* Here we sent the packet out of the receive port. Note that
  * we allocate one entry and schedule it. Your design would be
  * faster if you do batch processing/transmission */
 
-    uint64_t frame = xsk_alloc_umem_frame(xsk);
-    if(frame == INVALID_UMEM_FRAME) {
+    uint64_t frame = xsk_alloc_umem_frame(xsk, true);
+    if (frame == INVALID_UMEM_FRAME) {
         assert(0);
         return DDS_RETCODE_OUT_OF_RESOURCES;
     }
@@ -353,7 +366,7 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
     uint32_t ret = xsk_ring_prod__reserve(&xsk->txFillRing, 1, &tx_idx);
     if (ret != 1) {
         /* No more transmit slots, drop the packet */
-        xsk_free_umem_frame(xsk, frame);
+        xsk_free_umem_frame(xsk, frame, true);
         return DDS_RETCODE_TRY_AGAIN;
     }
 
@@ -369,8 +382,8 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
 
     // Fill the data
     size_t data_copied = ddsi_userspace_copy_iov_to_packet(niov, iov, &frame_buffer->payload, XDP_L2_FRAME_DATA_SIZE);
-    if(data_copied == 0) {
-        xsk_free_umem_frame(xsk, frame);
+    if (data_copied == 0) {
+        xsk_free_umem_frame(xsk, frame, true);
         return DDS_RETCODE_OUT_OF_RESOURCES;
     }
 
@@ -379,20 +392,24 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
     txDescriptor->addr = tx_idx;
     txDescriptor->len = DDSI_USERSPACE_GET_PACKET_SIZE(data_copied, struct xdp_l2_packet);
     xsk_ring_prod__submit(&xsk->txFillRing, 1);
+    pendingTransmits++;
 
-    // We don't actually send anything here. This is just to notify the kernel. Therefore, should have 0 bytes
-    // transferred.
-    if(sendto(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0) != 0) {
-        printf("XDP: Sendto call failed.\n");
-        abort();
+    // We don't actually send anything here. This is just to notify the kernel.
+    // Therefore, should have 0 bytes transferred.
+    if (xsk_ring_prod__needs_wakeup(&xsk->txFillRing)) {
+        if (sendto(xsk_socket__fd(xsk->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0) != 0) {
+            printf("XDP: Sendto call failed.\n");
+            abort();
+        }
     }
 
-    printf("XDP: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free).\n",
+    printf("XDP: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free, %i pending).\n",
            dst->port, niov, data_copied,
            frame_buffer->payload[0], frame_buffer->payload[1], frame_buffer->payload[2],
            frame_buffer->payload[data_copied-3], frame_buffer->payload[data_copied-2], frame_buffer->payload[data_copied-1],
            rte_hash_crc(frame_buffer->payload, data_copied, 1337),
-           xsk_umem_free_frames(xsk)
+           xsk_umem_free_frames(xsk, true),
+           pendingTransmits
     );
 
     /* Collect/free completed TX buffers */
@@ -403,11 +420,16 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
 
     if (completed > 0) {
         for (unsigned int i = 0; i < completed; i++) {
-            xsk_free_umem_frame(xsk, *xsk_ring_cons__comp_addr(&xsk->umem->txCompletionRing, indexTXCompletionRing));
+            xsk_free_umem_frame(
+                xsk,
+                *xsk_ring_cons__comp_addr(&xsk->umem->txCompletionRing, indexTXCompletionRing),
+                true
+            );
             indexTXCompletionRing++;
         }
 
         xsk_ring_cons__release(&xsk->umem->txCompletionRing, completed);
+        pendingTransmits -= completed;
     }
 
     return (ssize_t) data_copied;
@@ -622,6 +644,9 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
     fact->xsk_if_queue = 0;
 
     fact->mac_addr = get_xdp_interface_mac_address(((xdp_transport_factory_t)fact)->ifname);
+
+    fact->xdp_flags = 0;
+    fact->xsk_bind_flags = XDP_USE_NEED_WAKEUP;
 
 
 //    /* Load custom program if configured */
