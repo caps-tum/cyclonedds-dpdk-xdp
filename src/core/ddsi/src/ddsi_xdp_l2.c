@@ -168,7 +168,7 @@ static uint64_t xsk_alloc_umem_frame(struct xsk_socket_info *xsk, bool is_tx)
 static void xsk_free_umem_frame(struct xsk_socket_info *xsk, uint64_t frame, bool is_tx)
 {
     umem_free_frame_stack *freeFrameStack = is_tx ? &xsk->umem_frames_tx : &xsk->umem_frames_rx;
-    assert(freeFrameStack->umem_frame_free < NUM_FRAMES);
+    assert(freeFrameStack->umem_frame_free < sizeof(freeFrameStack->umem_frame_addr) / sizeof(freeFrameStack->umem_frame_addr[0]));
 
     freeFrameStack->umem_frame_addr[freeFrameStack->umem_frame_free] = frame;
     freeFrameStack->umem_frame_free++;
@@ -370,7 +370,7 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
         return DDS_RETCODE_TRY_AGAIN;
     }
 
-    xdp_l2_packet_t frame_buffer = xsk_umem__get_data(xsk->umem->buffer, tx_idx);
+    xdp_l2_packet_t frame_buffer = xsk_umem__get_data(xsk->umem->buffer, frame);
 
     // Fill the ethernet header
     assert(dst->port < UINT16_MAX);
@@ -389,7 +389,7 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
 
     // Create the TX Descriptor and actually send the message
     struct xdp_desc *txDescriptor = xsk_ring_prod__tx_desc(&xsk->txFillRing, tx_idx);
-    txDescriptor->addr = tx_idx;
+    txDescriptor->addr = frame;
     txDescriptor->len = DDSI_USERSPACE_GET_PACKET_SIZE(data_copied, struct xdp_l2_packet);
     xsk_ring_prod__submit(&xsk->txFillRing, 1);
     pendingTransmits++;
