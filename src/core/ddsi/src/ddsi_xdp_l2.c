@@ -160,7 +160,7 @@ static uint64_t xsk_alloc_umem_frame(struct xsk_socket_info *xsk, bool is_tx)
     freeFrameStack->umem_frame_free--;
     frame = freeFrameStack->umem_frame_addr[freeFrameStack->umem_frame_free];
     freeFrameStack->umem_frame_addr[freeFrameStack->umem_frame_free] = INVALID_UMEM_FRAME;
-    fprintf(stderr, "XDP UMEM: 1 %s frame allocated: %lu.\n", is_tx?"TX":"RX", frame);
+//    fprintf(stderr, "XDP UMEM: 1 %s frame allocated: %lu.\n", is_tx?"TX":"RX", frame);
     assert(frame >= 0 && frame < NUM_FRAMES * XDP_L2_FRAME_SIZE);
     return frame;
 }
@@ -172,7 +172,7 @@ static void xsk_free_umem_frame(struct xsk_socket_info *xsk, uint64_t frame, boo
 
     freeFrameStack->umem_frame_addr[freeFrameStack->umem_frame_free] = frame;
     freeFrameStack->umem_frame_free++;
-    fprintf(stderr, "XDP UMEM: 1 %s frame freed: %lu.\n", is_tx?"TX":"RX", frame);
+//    fprintf(stderr, "XDP UMEM: 1 %s frame freed: %lu.\n", is_tx?"TX":"RX", frame);
     assert(frame >= 0 && frame < NUM_FRAMES * XDP_L2_FRAME_SIZE);
 }
 
@@ -333,12 +333,12 @@ static ssize_t ddsi_xdp_l2_conn_read (struct ddsi_tran_conn * conn, unsigned cha
     // rxCompletionRing, freeing up the descriptor slots
     xsk_ring_cons__release(&xsk->rxCompletionRing, 1);
 
-    printf("XDP: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free).\n",
-           srcloc->port, bytes_received,
-           buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
-           rte_hash_crc(buf, bytes_received, 1337),
-           xsk_umem_free_frames(xsk, false)
-    );
+//    printf("XDP: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free).\n",
+//           srcloc->port, bytes_received,
+//           buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
+//           rte_hash_crc(buf, bytes_received, 1337),
+//           xsk_umem_free_frames(xsk, false)
+//    );
 
     return bytes_received;
 }
@@ -403,14 +403,14 @@ static ssize_t ddsi_xdp_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi_
         }
     }
 
-    printf("XDP: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free, %i pending).\n",
-           dst->port, niov, data_copied,
-           frame_buffer->payload[0], frame_buffer->payload[1], frame_buffer->payload[2],
-           frame_buffer->payload[data_copied-3], frame_buffer->payload[data_copied-2], frame_buffer->payload[data_copied-1],
-           rte_hash_crc(frame_buffer->payload, data_copied, 1337),
-           xsk_umem_free_frames(xsk, true),
-           pendingTransmits
-    );
+//    printf("XDP: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %lu umems free, %i pending).\n",
+//           dst->port, niov, data_copied,
+//           frame_buffer->payload[0], frame_buffer->payload[1], frame_buffer->payload[2],
+//           frame_buffer->payload[data_copied-3], frame_buffer->payload[data_copied-2], frame_buffer->payload[data_copied-1],
+//           rte_hash_crc(frame_buffer->payload, data_copied, 1337),
+//           xsk_umem_free_frames(xsk, true),
+//           pendingTransmits
+//    );
 
     /* Collect/free completed TX buffers */
     uint32_t indexTXCompletionRing;
