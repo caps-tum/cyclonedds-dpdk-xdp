@@ -228,18 +228,21 @@ static struct xsk_socket_info *xsk_configure_socket(xdp_transport_factory_t fact
     xsk_info->umem_frames_rx.umem_frame_free = NUM_FRAMES / 2;
 
     /* Stuff the receive path with buffers, we assume we have enough */
-    uint32_t rxFillRingIndex;
-    ret = xsk_ring_prod__reserve(&xsk_info->umem->rxFillRing, XSK_RING_PROD__DEFAULT_NUM_DESCS, &rxFillRingIndex);
+    // We need 1 buffer free on the RX path.
+    uint32_t initialRXNumAllocacted = XSK_RING_PROD__DEFAULT_NUM_DESCS - 1;
 
-    if (ret != XSK_RING_PROD__DEFAULT_NUM_DESCS) {
+    uint32_t rxFillRingIndex;
+    ret = xsk_ring_prod__reserve(&xsk_info->umem->rxFillRing, initialRXNumAllocacted, &rxFillRingIndex);
+
+    if (ret != initialRXNumAllocacted) {
         return NULL;
     }
 
-    for (unsigned int i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS; i ++) {
+    for (unsigned int i = 0; i < initialRXNumAllocacted; i ++) {
         *xsk_ring_prod__fill_addr(&xsk_info->umem->rxFillRing, rxFillRingIndex) = xsk_alloc_umem_frame(xsk_info, false);
         rxFillRingIndex++;
     }
-    xsk_ring_prod__submit(&xsk_info->umem->rxFillRing, XSK_RING_PROD__DEFAULT_NUM_DESCS);
+    xsk_ring_prod__submit(&xsk_info->umem->rxFillRing, initialRXNumAllocacted);
 
     return xsk_info;
 }
