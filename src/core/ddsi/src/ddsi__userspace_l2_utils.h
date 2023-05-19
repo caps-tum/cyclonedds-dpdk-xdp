@@ -70,19 +70,19 @@ static inline size_t ddsi_userspace_copy_iov_to_packet(size_t niov, const ddsrt_
 }
 
 // Packet utils
-static inline uint16_t ddsi_userspace_get_packet_size__(uint16_t dataSize, size_t payloadOffset) {
+static inline uint16_t ddsi_userspace_get_packet_size__(size_t dataSize, size_t payloadOffset) {
     if(dataSize + payloadOffset > UINT16_MAX) {
         return 0;
     }
-    return dataSize + (uint16_t)payloadOffset;
+    return (uint16_t)(dataSize + payloadOffset);
 }
 #define DDSI_USERSPACE_GET_PACKET_SIZE(dataSize, type) ddsi_userspace_get_packet_size__(dataSize, offsetof(type, payload))
 
-static inline uint16_t ddsi_userspace_get_payload_size__(uint16_t packetSize, size_t payloadOffset) {
-    if(packetSize < payloadOffset || payloadOffset > UINT16_MAX) {
+static inline uint16_t ddsi_userspace_get_payload_size__(size_t packetSize, size_t payloadOffset) {
+    if(packetSize < payloadOffset || payloadOffset > UINT16_MAX || packetSize > UINT16_MAX) {
         return 0;
     }
-    return (uint16_t)payloadOffset - packetSize;
+    return (uint16_t)(packetSize - payloadOffset);
 }
 #define DDSI_USERSPACE_GET_PAYLOAD_SIZE(packetSize, type) ddsi_userspace_get_payload_size__(packetSize, offsetof(type, payload))
 
