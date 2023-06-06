@@ -141,12 +141,12 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
             DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(srcloc->address, 10, &packet->header.s_addr.addr_bytes);
         }
 
-        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
-               srcloc->port, bytes_received,
-               buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
-               rte_hash_crc(packet->payload, bytes_received, 1337),
-               rte_mempool_avail_count(m_factory->m_dpdk_memory_pool_rx)
-        );
+//        printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
+//               srcloc->port, bytes_received,
+//               buf[0], buf[1], buf[2], buf[bytes_received-3], buf[bytes_received-2], buf[bytes_received-1],
+//               rte_hash_crc(packet->payload, bytes_received, 1337),
+//               rte_mempool_avail_count(m_factory->m_dpdk_memory_pool_rx)
+//        );
         assert(conn->m_base.m_port == srcloc->port);
 
         // Packet is only allocated if it was successfully received.
@@ -218,12 +218,12 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
         abort();
     }
 
-    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
-           dst->port, niov, bytes_transferred,
-           data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[bytes_transferred-3], data_loc->payload[bytes_transferred-2], data_loc->payload[bytes_transferred-1],
-           rte_hash_crc(data_loc->payload, bytes_transferred, 1337),
-           rte_mempool_avail_count(factory->m_dpdk_memory_pool_tx)
-    );
+//    printf("DPDK: Write complete (port %i, %zu iovs, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
+//           dst->port, niov, bytes_transferred,
+//           data_loc->payload[0], data_loc->payload[1], data_loc->payload[2], data_loc->payload[bytes_transferred-3], data_loc->payload[bytes_transferred-2], data_loc->payload[bytes_transferred-1],
+//           rte_hash_crc(data_loc->payload, bytes_transferred, 1337),
+//           rte_mempool_avail_count(factory->m_dpdk_memory_pool_tx)
+//    );
 
     rc = DDS_RETCODE_OK;
     return (rc == DDS_RETCODE_OK ? (ssize_t) bytes_transferred : -1);
