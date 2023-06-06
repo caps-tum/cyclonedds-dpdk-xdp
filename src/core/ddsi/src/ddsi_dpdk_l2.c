@@ -138,7 +138,7 @@ static ssize_t ddsi_dpdk_l2_conn_read (struct ddsi_tran_conn * conn, unsigned ch
         {
             srcloc->kind = DDSI_LOCATOR_KIND_DPDK_L2;
             srcloc->port = ddsi_userspace_l2_get_port_for_ethertype(packet->header.ether_type);
-            DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(srcloc->address, 10, &packet->header.s_addr);
+            DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(srcloc->address, 10, &packet->header.s_addr.addr_bytes);
         }
 
         printf("DPDK: Read complete (port %i, %zi bytes: %02x %02x %02x ... %02x %02x %02x, CRC: %x, %i mbufs free).\n",
@@ -265,7 +265,7 @@ static int ddsi_dpdk_l2_conn_locator (struct ddsi_tran_factory * fact, struct dd
     // VB: The MAC address is in the last 6 bytes, the rest is zeroes.
     DDSRT_STATIC_ASSERT(sizeof(loc->address) == sizeof(struct rte_ether_addr) + 10);
     struct rte_ether_addr addr = get_dpdk_interface_mac_address(((dpdk_transport_factory_t)fact)->dpdk_port_identifier);
-    DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(loc->address, 10, &addr);
+    DDSI_USERSPACE_COPY_MAC_ADDRESS_AND_ZERO(loc->address, 10, &addr.addr_bytes);
     return 0;
 }
 
@@ -371,7 +371,7 @@ static int ddsi_dpdk_l2_enumerate_interfaces (struct ddsi_tran_factory * fact, e
 
     // TODO: We assume interface zero
     struct rte_ether_addr addr = get_dpdk_interface_mac_address(0);
-    return ddsi_userspace_create_fake_interface(interfaces, (userspace_l2_mac_addr *) &addr);
+    return ddsi_userspace_create_fake_interface(interfaces, (userspace_l2_mac_addr *) &addr.addr_bytes);
 }
 
 static int ddsi_dpdk_l2_locator_from_sockaddr (const struct ddsi_tran_factory *tran, ddsi_locator_t *loc, const struct sockaddr *sockaddr)
