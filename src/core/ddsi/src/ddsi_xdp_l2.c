@@ -667,7 +667,7 @@ int ddsi_xdp_l2_init (struct ddsi_domaingv *gv)
 //        } else {
 //            prog = xdp_program__open_file(cfg.filename, NULL, &opts);
 //        }
-    const char* xdp_module_path = "../../../lib/cyclonedds_xdp/CycloneDDS-EXT/build/ddsi_xdp_l2_kern.o";
+    const char* xdp_module_path = "./lib/cyclonedds_xdp/CycloneDDS-EXT/build/ddsi_xdp_l2_kern.o";
     printf("Assuming XDP module path: %s\n", xdp_module_path);
     prog = xdp_program__open_file(xdp_module_path, NULL, &opts);
     err = libxdp_get_error(prog);
