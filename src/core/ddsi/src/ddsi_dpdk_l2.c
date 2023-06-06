@@ -198,7 +198,7 @@ static ssize_t ddsi_dpdk_l2_conn_write (struct ddsi_tran_conn * conn, const ddsi
     );
     assert(data_loc);
     assert(dst->port < UINT16_MAX);
-    data_loc->header.ether_type = DPDK_L2_ETHER_TYPE + (uint16_t)dst->port;
+    data_loc->header.ether_type = ddsi_userspace_l2_get_ethertype_for_port(dst->port);
     // VB: Source address: Current interface mac address. Destination address: Broadcast.
     rte_eth_macaddr_get(0, &data_loc->header.s_addr);
     memset(data_loc->header.d_addr.addr_bytes, 0xFF, sizeof(data_loc->header.d_addr.addr_bytes));
@@ -288,7 +288,7 @@ static dds_return_t ddsi_dpdk_l2_create_conn (struct ddsi_tran_conn **conn_out, 
 //        return DDS_RETCODE_ERROR;
 //    }
     // TODO: It looks like raweth uses ethernet type as port number
-    if(port + DPDK_L2_ETHER_TYPE >= UINT16_MAX) {
+    if(!ddsi_userspace_l2_is_valid_port(port)) {
         DDS_CERROR(&fact->gv->logconfig, "ddsi_dpdk2_l2_create_conn: DDSI requested too large port number %i.", port);
         return DDS_RETCODE_ERROR;
     }

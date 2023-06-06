@@ -487,7 +487,7 @@ static dds_return_t ddsi_xdp_l2_create_conn (struct ddsi_tran_conn **conn_out, s
     /* If port is zero, need to create dynamic port */
     // TODO: It looks like raweth uses ethernet type as port number
     assert(port < UINT16_MAX);
-    if(!ddsi_userspace_l2_is_valid_ethertype(ddsi_userspace_l2_get_ethertype_for_port((uint16_t) port))) {
+    if(!ddsi_userspace_l2_is_valid_port(port)) {
         DDS_CERROR(&fact->gv->logconfig, "ddsi_dpdk2_l2_create_conn: DDSI requested too large port number %i.", port);
         return DDS_RETCODE_ERROR;
     }
