@@ -501,7 +501,7 @@ int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv)
     char *pseudoArgs[] = {arg0, NULL};
     int ret = rte_eal_init(0, pseudoArgs);
     if (ret != 0) {
-        DDS_CERROR(&fact->m_base.gv->logconfig, "Unable to initialize DPDK RTE_EAL");
+        DDS_CERROR(&fact->m_base.gv->logconfig, "Unable to initialize DPDK RTE_EAL. Please check the RTE log messages above for errors.");
         return DDS_RETCODE_NO_NETWORK;
     }
     printf("RTE EAL init success.\n");
@@ -511,7 +511,7 @@ int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv)
             "MBUF_POOL_TX", NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, (int) rte_socket_id()
             );
     if (fact->m_dpdk_memory_pool_tx == NULL) {
-        DDS_CERROR(&fact->m_base.gv->logconfig, "Failed to allocate DPDK mempool.");
+        DDS_CERROR(&fact->m_base.gv->logconfig, "Failed to allocate DPDK TX mempool.  Please check the RTE log messages above for errors.");
         return DDS_RETCODE_OUT_OF_RESOURCES;
     }
     // RX buffers
@@ -519,7 +519,7 @@ int ddsi_dpdk_l2_init (struct ddsi_domaingv *gv)
             "MBUF_POOL_RX", NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, (int) rte_socket_id()
     );
     if (fact->m_dpdk_memory_pool_rx == NULL) {
-        DDS_CERROR(&fact->m_base.gv->logconfig, "Failed to allocate DPDK mempool.");
+        DDS_CERROR(&fact->m_base.gv->logconfig, "Failed to allocate DPDK RX mempool.  Please check the RTE log messages above for errors.");
         return DDS_RETCODE_OUT_OF_RESOURCES;
     }
 
