@@ -12,7 +12,7 @@ These extensions operate on layer 2, no routing is currently possible. To activa
 There are currently two limitations:
 
 - Packets are read one-by-one for both DPDK and XDP, which is good for latency but not great for throughput. Ideally, packets should be batched to reduce the number of library invocations. Despite this, CycloneDDS-DPDK has been shown to process more than 250 000 samples/s on commodity hardware.
-- Sample size is limited because no packet segmentation is currently implemented. The serialized sample must fit into a DPDK or XDP frame, which is typically limited by the MTU. All larger packets are dropped.
+- Sample size is limited because of the packet segmentation currently implemented. The serialized sample must fit into a DPDK or XDP frame, which is typically limited by the MTU. All larger packets are dropped.
 
 Note that for DPDK a DPDK-configured interface is required and for XDP the privileges to load the packet filter are required.
 
