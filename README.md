@@ -1,3 +1,30 @@
+
+# User-space Networking (DPDK + XDP) for CycloneDDS
+
+This is a fork of CycloneDDS integrating experimental support for user-space networking, which has been shown to improve key metrics such as latency + latency bounds, as well as throughput in terms of samples/second and bandwidth utilization. 
+
+Please consult the paper **Adopting User-Space Networking for DDS Message-Oriented Middleware** for details on the implementation and an evaluation of performance.
+
+The core implementations can be found in `src/core/ddsi/src/ddsi_dpdk_l2.c` and `src/core/ddsi/src/ddsi__xdp_l2.h`. Fortunately, the number of changes to existing CycloneDDS core code are minimal.
+
+These extensions operate on layer 2, no routing is currently possible. To activate an extension, you need to pass a CycloneDDS XML configuration file like `local_test/cyclonedds_config_dpdk.xml` or `local_test/cyclonedds_config_xdp.xml` to CycloneDDS. For more information on CycloneDDS configuration via XML, please consult the manual.
+
+There are currently two limitations:
+
+- Packets are read one-by-one for both DPDK and XDP, which is good for latency but not great for throughput. Ideally, packets should be batched to reduce the number of library invocations. Despite this, CycloneDDS-DPDK has been shown to process more than 250 000 samples/s on commodity hardware.
+- Sample size is limited because no packet segmentation is currently implemented. The serialized sample must fit into a DPDK or XDP frame, which is typically limited by the MTU. All larger packets are dropped.
+
+Note that for DPDK a DPDK-configured interface is required and for XDP the privileges to load the packet filter are required.
+
+Other than that, the implementation is very stable as the extensions can leverage both the maturity of CycloneDDS as well as DPDK and XDP.
+
+If you use this work, please cite **Adopting User-Space Networking for DDS Message-Oriented Middleware**. For any questions contact Vincent.
+
+
+Below is the original CycloneDDS readme.
+
+# Eclipse Cyclone DDS
+
 ![GitHub release](https://img.shields.io/github/v/release/eclipse-cyclonedds/cyclonedds?include_prereleases)
 [![Build Status](https://dev.azure.com/eclipse-cyclonedds/cyclonedds/_apis/build/status/Pull%20requests?branchName=master)](https://dev.azure.com/eclipse-cyclonedds/cyclonedds/_build/latest?definitionId=4&branchName=master)
 [![Coverity Status](https://scan.coverity.com/projects/19078/badge.svg)](https://scan.coverity.com/projects/eclipse-cyclonedds-cyclonedds)
@@ -7,8 +34,6 @@
 [![Website](https://img.shields.io/badge/web-cyclonedds.io-blue)](https://cyclonedds.io)
 [![Community](https://img.shields.io/badge/discord-join%20community-5865f2)](https://discord.gg/BkRYQPpZVV)
 
-
-# Eclipse Cyclone DDS
 
 Eclipse Cyclone DDS is a very performant and robust open-source implementation of the [OMG DDS specification](https://www.omg.org/spec/DDS/1.4/About-DDS/).
 Cyclone DDS is developed completely in the open as an Eclipse IoT project (see [eclipse-cyclone-dds](https://projects.eclipse.org/projects/iot.cyclonedds)) with a growing list of [adopters](https://iot.eclipse.org/adopters/?#iot.cyclonedds) (if you're one of them, please add your [logo](https://github.com/EclipseFdn/iot.eclipse.org/issues/new?template=adopter_request.md)).
